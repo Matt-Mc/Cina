@@ -55,7 +55,7 @@ jobs:
           CINA_KEY_ALIAS: ${{ secrets.CINA_KEY_ALIAS }}
           CINA_KEYSTORE_PASSWORD: ${{ secrets.CINA_KEYSTORE_PASSWORD }}
           CINA_KEY_PASSWORD: ${{ secrets.CINA_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --no-daemon
+        run: bash ./gradlew :app:assembleRelease --no-daemon
 
       - name: Prepare APK
         run: |
