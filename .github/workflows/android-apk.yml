@@ -1,0 +1,77 @@
+name: Build Cina APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cina-release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android build tools
+        run: sdkmanager "platforms;android-36" "ndk;29.0.13113456" "cmake;3.31.6"
+
+      - name: Prepare release signing and version
+        env:
+          CINA_KEYSTORE_BASE64: ${{ secrets.CINA_KEYSTORE_BASE64 }}
+          CINA_KEY_ALIAS: ${{ secrets.CINA_KEY_ALIAS }}
+          CINA_KEYSTORE_PASSWORD: ${{ secrets.CINA_KEYSTORE_PASSWORD }}
+          CINA_KEY_PASSWORD: ${{ secrets.CINA_KEY_PASSWORD }}
+        run: |
+          test -n "$CINA_KEYSTORE_BASE64" && test -n "$CINA_KEY_ALIAS" && test -n "$CINA_KEYSTORE_PASSWORD" && test -n "$CINA_KEY_PASSWORD" || {
+            echo "Configure the four CINA release-signing secrets described in README.md." >&2
+            exit 1
+          }
+          printf '%s' "$CINA_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/cina-release.jks"
+          echo "CINA_KEYSTORE_FILE=$RUNNER_TEMP/cina-release.jks" >> "$GITHUB_ENV"
+          echo "CINA_BUILD_NUMBER=$((GITHUB_RUN_NUMBER + 1))" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        env:
+          CINA_KEY_ALIAS: ${{ secrets.CINA_KEY_ALIAS }}
+          CINA_KEYSTORE_PASSWORD: ${{ secrets.CINA_KEYSTORE_PASSWORD }}
+          CINA_KEY_PASSWORD: ${{ secrets.CINA_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Prepare APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/cina-build-${CINA_BUILD_NUMBER}-arm64.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cina-build-${{ env.CINA_BUILD_NUMBER }}-arm64
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${CINA_BUILD_NUMBER}" dist/*.apk \
+            --title "Cina build ${CINA_BUILD_NUMBER}" \
+            --notes "Built from ${GITHUB_SHA}." \
+            --target "${GITHUB_SHA}" \
+            --latest
