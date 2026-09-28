@@ -29,13 +29,20 @@ On Windows, you can encode the keystore with `[Convert]::ToBase64String([IO.File
 2. Select an installed model. Chat works without network access after the model is installed.
 3. In a chat, enable **Web** only if you want internet search. Set your own Brave Search API key in **Settings**. Gated Hugging Face files require account approval and a token entered in Settings.
 4. Notes and reminders are stored inside Cina. Calendar, alarm, and share actions open Android system apps for the final user step.
+5. To use remote tools, open **Settings → Connected tools**, choose a service, and enter an access token with the permissions you want Cina to have. Cina checks the connection and loads the server's tool list. Disconnecting deletes its saved token.
 
-The assistant requests confirmation before creating or sharing data. Per-chat YOLO mode skips these confirmations for the app's available tools and displays an action log. It turns off when the app leaves the foreground or the user changes chats. Chat is the home screen; Models, Notes, Memory, and Settings live in the side menu.
+## Remote MCP tools
+
+Cina includes ten hosted MCP presets: Gmail, Google Drive, Google Docs, Google Sheets, Google Slides, Google Calendar, Google Chat, Google Contacts (People API), GitHub, and Linear. Google Workspace MCP requires a configured Google Cloud project and OAuth authorization; a pasted Google access token expires, so renew it in Settings when needed. GitHub accepts a personal access token and Linear accepts an API key or OAuth access token. Presets are connection options, not accounts connected by default.
+
+Connected servers receive only the arguments of tools Cina calls. Tokens are encrypted with Android Keystore, never included in model prompts or action logs, and removed on disconnect. Cina discovers tool names and input schemas from the server, can search them during a chat, and asks for approval before each remote tool call unless that chat has YOLO mode enabled. Remote server responses are treated as untrusted data. The MCP client supports HTTPS Streamable HTTP with the 2026-07-28 protocol and a 2025-03-26 fallback; it does not run local `stdio` MCP servers or perform an interactive OAuth sign-in yet.
+
+The assistant requests confirmation before creating or sharing data. Per-chat YOLO mode skips these confirmations for the app's available tools and displays an action log. It turns off when the app leaves the foreground or the user changes chats. Chat is the home screen; Models, Notes, Memory, and Settings live in the side menu. The You profile stores optional personal details for future chats; companion appearance and response preferences are in Settings.
 
 ## Current boundaries
 
 - GGUF text chat models only. Import validation checks GGUF structure; llama.cpp decides whether an architecture can run on this device.
 - Reminder notifications are inexact and depend on Android notification permission and battery policy.
 - Web search sends its query to Brave. Search results are treated as untrusted input to the local model.
-- No cloud inference, voice, accessibility automation, or background autonomous agent.
+- No cloud inference, voice, accessibility automation, or background autonomous agent. Connected MCP services do exchange data with their providers when used.
 - Device performance and memory use vary by model. The app gives an estimate before download; test on target phones before distribution.

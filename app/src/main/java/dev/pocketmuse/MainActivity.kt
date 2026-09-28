@@ -119,8 +119,9 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
     var menuOpen by remember { mutableStateOf(false) }
     val status by vm.status.collectAsState()
     val pending by vm.pending.collectAsState()
+    val youProfile by vm.youProfile.collectAsState()
     Box(Modifier.fillMaxSize().background(Paper)) {
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(page == "Chat") {
                     RoundControl("☰", "Open menu") { menuOpen = true }
@@ -132,7 +133,11 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                     Text("cina", fontFamily = FontFamily.Serif, fontSize = 27.sp, color = Ink)
                 }
                 Spacer(Modifier.weight(1f))
-                Text("ON YOUR DEVICE", fontSize = 10.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Medium, color = Muted)
+                if (youProfile.showPet) {
+                    CompanionBubble(youProfile, 48.dp, Modifier.clickable(onClickLabel = "Customize Cina") { page = "Settings" })
+                } else {
+                    Text("ON YOUR DEVICE", fontSize = 10.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Medium, color = Muted)
+                }
             }
             AnimatedVisibility(status.isNotBlank(), enter = fadeIn(tween(180)), exit = fadeOut(tween(160))) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp).background(Soft, RoundedCornerShape(14.dp)).padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -148,6 +153,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                     "Models" -> ModelsScreen(vm)
                     "Notes" -> NotesScreen(vm)
                     "Memory" -> MemoryScreen(vm)
+                    "You" -> YouScreen(youProfile, vm::saveYouProfile)
                     else -> SettingsScreen(vm, updateStatus, onCheckUpdates)
                 }
             }
@@ -170,6 +176,12 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                         }
                     }
                     Spacer(Modifier.weight(1f))
+                    HorizontalDivider(color = Line)
+                    Row(Modifier.fillMaxWidth().clickable { page = "You"; menuOpen = false }.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("You", Modifier.weight(1f), fontSize = 19.sp, color = if(page == "You") Accent else Ink,
+                            fontWeight = if(page == "You") FontWeight.SemiBold else FontWeight.Normal)
+                        if(page == "You") Text("•", color = Accent)
+                    }
                     Text("Private by design. Here with you.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -203,6 +215,7 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit) {
     var text by remember { mutableStateOf("") }
     var showChats by remember { mutableStateOf(false) }
     var showLog by remember { mutableStateOf(false) }
+    var showOptions by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size, busy) { if(messages.isNotEmpty() || busy) listState.animateScrollToItem(if(busy) messages.size else (messages.size - 1).coerceAtLeast(0)) }
     Column(Modifier.fillMaxSize()) {
@@ -213,12 +226,20 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit) {
             }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = vm::newChat) { Text("New chat", color = Accent) }
-        }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmallPill(modelName ?: "Choose a model", active = modelName != null, onClick = onModels)
-            SmallPill("Web ${if(chat?.web == true) "on" else "off"}", active = chat?.web == true) { vm.setFlag("web", chat?.web != true) }
-            SmallPill("YOLO ${if(chat?.yolo == true) "on" else "off"}", active = chat?.yolo == true, prominent = true) { vm.setFlag("yolo", chat?.yolo != true) }
-            SmallPill("Actions", active = false) { showLog = true }
+            Box {
+                RoundControl("⋯", "Chat options") { showOptions = true }
+                DropdownMenu(expanded = showOptions, onDismissRequest = { showOptions = false }, containerColor = Paper) {
+                    DropdownMenuItem(text = { Text("Model · ${modelName ?: "Choose one"}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        onClick = { showOptions = false; onModels() })
+                    HorizontalDivider(color = Line)
+                    DropdownMenuItem(text = { Text("Web search") }, trailingIcon = { Switch(checked = chat?.web == true, onCheckedChange = { vm.setFlag("web", it); showOptions = false }) },
+                        onClick = { vm.setFlag("web", chat?.web != true); showOptions = false })
+                    DropdownMenuItem(text = { Text("YOLO mode") }, trailingIcon = { Switch(checked = chat?.yolo == true, onCheckedChange = { vm.setFlag("yolo", it); showOptions = false }) },
+                        onClick = { vm.setFlag("yolo", chat?.yolo != true); showOptions = false })
+                    HorizontalDivider(color = Line)
+                    DropdownMenuItem(text = { Text("Recent actions") }, onClick = { showOptions = false; showLog = true })
+                }
+            }
         }
         AnimatedVisibility(chat?.yolo == true, enter = fadeIn(tween(180)), exit = fadeOut(tween(150))) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp).background(Color(0xFFEAF1E9), RoundedCornerShape(14.dp)).padding(start = 12.dp, end = 8.dp, top = 3.dp, bottom = 7.dp)) {
@@ -297,16 +318,6 @@ private fun WorkingIndicator() {
             Box(Modifier.size(6.dp).background(Accent.copy(alpha = alpha), CircleShape))
         }
         Spacer(Modifier.width(7.dp)); Text("Thinking", color = Muted, fontSize = 13.sp)
-    }
-}
-
-@Composable
-private fun SmallPill(label: String, active: Boolean, prominent: Boolean = false, onClick: () -> Unit) {
-    val color = if(active) { if(prominent) Accent else Soft } else if(prominent) Color(0xFFEAF1E9) else Color.Transparent
-    Surface(shape = CircleShape, color = color, border = if(active || prominent) null else androidx.compose.foundation.BorderStroke(1.dp, Line),
-        modifier = Modifier.clickable(onClick = onClick)) {
-        Text(label, Modifier.padding(horizontal = 13.dp, vertical = 8.dp), fontSize = 12.sp,
-            color = if(active && prominent) Color.White else if(prominent) Accent else if(active) Ink else Muted)
     }
 }
 
@@ -417,7 +428,13 @@ private fun MemoryScreen(vm: AssistantViewModel) {
 @Composable
 private fun SettingsScreen(vm: AssistantViewModel, updateStatus: String, onCheckUpdates: () -> Unit) {
     var hf by remember { mutableStateOf("") }; var brave by remember { mutableStateOf("") }
+    val profile by vm.youProfile.collectAsState()
+    val connections by vm.connections.collectAsState()
+    var expandedConnection by remember { mutableStateOf<String?>(null) }
+    var mcpToken by remember { mutableStateOf("") }
     Page("Settings", "Just the essentials. Cina's conversations and personal data stay on your phone.") {
+        CompanionSettings(profile, vm::saveCompanionSettings)
+        HorizontalDivider(color = Line); Spacer(Modifier.height(4.dp))
         SectionTitle("App updates")
         Text("Version ${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 13.sp)
         TextButton(onClick = onCheckUpdates) { Text("Check for updates") }
@@ -433,6 +450,29 @@ private fun SettingsScreen(vm: AssistantViewModel, updateStatus: String, onCheck
         OutlinedTextField(brave, { brave = it }, label = { Text("Brave Search API key") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
         Button(onClick = { vm.setKey("brave", brave); brave = "" }, enabled = brave.isNotBlank()) { Text("Save key") }
         Text("Keys are encrypted and stored on this device.", color = Muted, fontSize = 12.sp)
+        HorizontalDivider(color = Line); Spacer(Modifier.height(4.dp))
+        SectionTitle("Connected tools")
+        Text("Connect a service to let Cina use its available tools. Each action asks before it runs unless YOLO mode is on.", color = Muted, fontSize = 13.sp)
+        Text("These services need an access token. Google Workspace needs OAuth setup in Google Cloud; its access tokens expire and must be renewed here.", color = Muted, fontSize = 12.sp)
+        connections.forEach { connection ->
+            val preset = connection.preset
+            Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(16.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(preset.title, color = Ink, fontWeight = FontWeight.SemiBold)
+                        Text(if(connection.connected && connection.toolCount > 0) "Connected · ${connection.toolCount} tools" else if(connection.connected) "Reconnect to load tools" else "Not connected", color = Muted, fontSize = 12.sp)
+                    }
+                    if(connection.connected) TextButton(onClick = { vm.disconnectMcp(preset.id); expandedConnection = null; mcpToken = "" }) { Text("Disconnect") }
+                    TextButton(onClick = { expandedConnection = if(expandedConnection == preset.id) null else preset.id; mcpToken = "" }) { Text(if(connection.connected) "Renew" else "Connect") }
+                }
+                if(expandedConnection == preset.id) {
+                    Text(preset.hint, color = Muted, fontSize = 12.sp)
+                    OutlinedTextField(mcpToken, { mcpToken = it }, label = { Text("Access token") },
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    Button(onClick = { vm.connectMcp(preset.id, mcpToken); mcpToken = ""; expandedConnection = null }, enabled = mcpToken.isNotBlank()) { Text("Connect and check tools") }
+                }
+            }
+        }
     }
 }
 

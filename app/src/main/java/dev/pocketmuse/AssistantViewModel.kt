@@ -15,7 +15,9 @@ import kotlinx.coroutines.withContext
 
 class AssistantViewModel(application: Application) : AndroidViewModel(application) {
     private val store = LocalStore(application)
+    private val profileStore = YouProfileStore(application)
     val secrets = SecretStore(application)
+    private val mcp = McpConnections(application, secrets)
     val library = ModelLibrary(application, store, secrets)
     private var runtime: AssistantRuntime? = null
     private var tools: AssistantTools? = null
@@ -61,8 +63,26 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val repoResults = _repoResults.asStateFlow()
     private val _remoteFiles = MutableStateFlow<List<RemoteModel>>(emptyList())
     val remoteFiles = _remoteFiles.asStateFlow()
+    private val _connections = MutableStateFlow(mcp.snapshot())
+    val connections = _connections.asStateFlow()
+    private val _youProfile = MutableStateFlow(profileStore.read())
+    val youProfile = _youProfile.asStateFlow()
 
-    fun attach(activity: Activity) { tools = AssistantTools(activity, store, secrets); runtime = AssistantRuntime(activity, store, tools!!) }
+    fun attach(activity: Activity) {
+        tools = AssistantTools(activity, store, secrets, mcp); runtime = AssistantRuntime(activity, store, tools!!)
+        viewModelScope.launch(Dispatchers.IO) { mcp.refreshEnabled(); _connections.value = mcp.snapshot(); runtime?.invalidate() }
+    }
+    fun connectMcp(id: String, token: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val count = mcp.connect(id, token)
+                _status.value = "Connected ${mcp.snapshot().first { it.preset.id == id }.preset.title}: $count tools available."
+                runtime?.invalidate()
+            } catch (e: Exception) { _status.value = e.message ?: "Connection failed." }
+            finally { _connections.value = mcp.snapshot() }
+        }
+    }
+    fun disconnectMcp(id: String) { mcp.disconnect(id); _connections.value = mcp.snapshot(); runtime?.invalidate() }
     fun refresh() { _chats.value = store.chats(); _messages.value = store.messages(_active.value); _models.value = store.models(); _notes.value = store.notes(); _reminders.value = store.reminders(); _memories.value = store.memories(); _logs.value = store.actionLog(_active.value) }
     fun newChat() { stop(); store.endChat(_active.value); _active.value = store.newChat(); refresh() }
     fun openChat(id: Long) { stop(); store.endChat(_active.value); _active.value = id; refresh() }
@@ -70,6 +90,19 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun endSession() { store.endChat(_active.value); refresh() }
     fun setModel(path: String) { stop(); runtime?.invalidate(); _selectedModel.value = path; prefs.edit().putString("model", path).apply() }
     fun setMemoryEnabled(enabled: Boolean) { _memoryEnabled.value = enabled; runtime?.invalidate(); prefs.edit().putBoolean("memory", enabled).apply() }
+    fun saveYouProfile(profile: YouProfile) = persistYouProfile(profile, "Your profile is saved on this device.")
+    fun saveCompanionSettings(profile: YouProfile) = persistYouProfile(profile, "Cina customization saved on this device.")
+    private fun persistYouProfile(profile: YouProfile, message: String) {
+        val saved = profile.copy(
+            name = profile.name.trim().take(80), pronouns = profile.pronouns.trim().take(60),
+            about = profile.about.trim().take(500), preferences = profile.preferences.trim().take(500),
+            petName = profile.petName.trim().take(40)
+        )
+        profileStore.save(saved)
+        _youProfile.value = saved
+        runtime?.invalidate()
+        _status.value = message
+    }
     fun setKey(type: String, value: String) { secrets.put(type, value); _status.value = "$type key saved on this device." }
     fun addNote(title: String, body: String) { if(title.isNotBlank() && body.isNotBlank()) { store.addNote(title.trim(), body.trim()); refresh() } }
     fun deleteNote(id: Long) { store.deleteNote(id); refresh() }
@@ -90,13 +123,13 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         task = viewModelScope.launch {
             _busy.value = true; _live.value = ""
             try {
-                assistant.use(model, chat, _memoryEnabled.value)
+                assistant.use(model, chat, _memoryEnabled.value, _youProfile.value)
                 val output = assistant.generate(text.trim()) { _live.value = it }
                 val request = try { dispatcher.parse(output) } catch (_: Exception) { finishAnswer(chat.id, "I couldn't understand the requested action. Please try rephrasing it."); return@launch }
                 if(request == null) finishAnswer(chat.id, output)
                 else if(dispatcher.needsConfirmation(request) && !chat.yolo) {
                     _pending.value = PendingAction(request, text.trim()); _live.value = ""
-                } else runTool(chat, request, assistant, dispatcher)
+        } else runTool(chat, request, assistant, dispatcher, text.trim())
                 if(_memoryEnabled.value && _pending.value == null) { try { assistant.extractMemory(text.trim()); refresh() } catch (_: Exception) { } finally { assistant.invalidate() } }
             } catch (_: CancellationException) { _status.value = "Stopped." }
             catch(e: Exception) { _status.value = e.message ?: "The model could not respond." }
@@ -112,18 +145,21 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         _pending.value = null
         task = viewModelScope.launch {
             _busy.value = true
-            try { runTool(chat, pendingAction.request, assistant, dispatcher); if(_memoryEnabled.value) { try { assistant.extractMemory(pendingAction.originalUserText); refresh() } finally { assistant.invalidate() } } }
+            try { runTool(chat, pendingAction.request, assistant, dispatcher, pendingAction.originalUserText, pendingAction.depth); if(_memoryEnabled.value && _pending.value == null) { try { assistant.extractMemory(pendingAction.originalUserText); refresh() } finally { assistant.invalidate() } } }
             catch(e: Exception) { _status.value = e.message ?: "Action failed." }
             finally { _busy.value = false; _live.value = "" }
         }
     }
     fun reject() { _pending.value = null; store.addMessage(_active.value, "assistant", "Action cancelled."); refresh() }
-    private suspend fun runTool(chat: Chat, request: ToolRequest, assistant: AssistantRuntime, dispatcher: AssistantTools) {
+    private suspend fun runTool(chat: Chat, request: ToolRequest, assistant: AssistantRuntime, dispatcher: AssistantTools, originalUserText: String, depth: Int = 0) {
         val result = try { dispatcher.execute(chat, request) } catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
         refresh()
-        val response = assistant.generate("Tool result for ${request.name}: $result. Explain the outcome to the user. If web sources appear, include their URLs. Do not call another tool.") { _live.value = it }
-        val anotherTool = try { dispatcher.parse(response) != null } catch (_: Exception) { false }
-        finishAnswer(chat.id, if(anotherTool) result else response)
+        val response = assistant.generate("Tool result for ${request.name}: $result. Continue the user's request. You may call another tool if needed; otherwise explain the outcome. If web sources appear, include their URLs.") { _live.value = it }
+        val next = try { dispatcher.parse(response) } catch (_: Exception) { null }
+        if (next == null) finishAnswer(chat.id, response)
+        else if (depth >= 2) finishAnswer(chat.id, "I reached the action limit for this request. Last result: ${result.take(1000)}")
+        else if (dispatcher.needsConfirmation(next) && !chat.yolo) { _pending.value = PendingAction(next, originalUserText, depth + 1); _live.value = "" }
+        else runTool(chat, next, assistant, dispatcher, originalUserText, depth + 1)
     }
     private fun finishAnswer(chatId: Long, answer: String) { store.addMessage(chatId, "assistant", answer.ifBlank { "I couldn't produce a response." }); refresh() }
     fun stop() { task?.cancel(); task = null; _busy.value = false; _pending.value = null; _live.value = "" }
