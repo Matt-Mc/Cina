@@ -26,5 +26,13 @@ class ReminderReceiver : BroadcastReceiver() {
             val alarms = context.getSystemService(AlarmManager::class.java)
             alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, whenMillis, pending)
         }
+        fun cancel(context: Context, id: Long) {
+            val intent = Intent(context, ReminderReceiver::class.java)
+            val pending = PendingIntent.getBroadcast(context, id.toInt(), intent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+            if (pending != null) {
+                context.getSystemService(AlarmManager::class.java).cancel(pending)
+                pending.cancel()
+            }
+        }
     }
 }

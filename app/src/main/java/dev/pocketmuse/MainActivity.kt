@@ -64,14 +64,23 @@ private val Accent = Color(0xFF4F7562)
 private val Warm = Color(0xFFF4F0E9)
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_WIDGET_PAGE = "widget_page"
+        const val EXTRA_WIDGET_PROMPT = "widget_prompt"
+    }
     private val vm: AssistantViewModel by viewModels()
     private var scheduledTaskOpenRequest by mutableIntStateOf(0)
+    private var widgetPageRequest by mutableStateOf<Pair<Int, String>?>(null)
+    private var widgetRequestId = 0
+    private var widgetDraft by mutableStateOf<String?>(null)
+    private var widgetDraftKey by mutableIntStateOf(0)
     private var availableUpdate by mutableStateOf<AppUpdate?>(null)
     private var updateStatus by mutableStateOf("")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (intent?.getBooleanExtra("open_scheduled_tasks", false) == true) scheduledTaskOpenRequest++
         vm.attach(this)
+        handleWidgetIntent(intent)
         window.statusBarColor = android.graphics.Color.rgb(250, 249, 246)
         window.navigationBarColor = android.graphics.Color.rgb(250, 249, 246)
         window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
@@ -85,6 +94,7 @@ class MainActivity : ComponentActivity() {
                 shapes = Shapes(small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(20.dp), large = RoundedCornerShape(28.dp))
             ) {
                 CinaApp(vm, availableUpdate, updateStatus, scheduledTaskOpenRequest,
+                    widgetPageRequest, widgetDraft, widgetDraftKey,
                     onCheckUpdates = { checkForUpdates(showResult = true) },
                     onDismissUpdate = { availableUpdate = null },
                     onDownloadUpdate = { update ->
@@ -98,11 +108,29 @@ class MainActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         if (intent.getBooleanExtra("open_scheduled_tasks", false)) scheduledTaskOpenRequest++
+        handleWidgetIntent(intent)
         intent.data?.takeIf { it.scheme == "dev.pocketmuse.cina" }?.let(vm::finishLinearSignIn)
     }
-    override fun onResume() { super.onResume(); vm.refresh() }
+    override fun onResume() { super.onResume(); vm.refresh(); TodayWidget.updateAll(this) }
     override fun onStop() { vm.endSession(); super.onStop() }
+
+    private fun handleWidgetIntent(intent: Intent?) {
+        val prompt = intent?.getStringExtra(EXTRA_WIDGET_PROMPT)?.trim()?.takeIf { it.isNotEmpty() }
+        if (prompt != null) {
+            vm.newChat()
+            widgetDraft = if (vm.models.value.any { it.path == vm.selectedModel.value }) {
+                vm.send(prompt); null
+            } else prompt
+            widgetDraftKey++
+            widgetPageRequest = ++widgetRequestId to "Chat"
+            return
+        }
+        intent?.getStringExtra(EXTRA_WIDGET_PAGE)?.let { page ->
+            if (page in setOf("Notes", "Scheduled tasks", "Chat")) widgetPageRequest = ++widgetRequestId to page
+        }
+    }
 
     private fun checkForUpdates(showResult: Boolean) {
         if (BuildConfig.DEBUG) {
@@ -126,9 +154,11 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateStatus: String, scheduledTaskOpenRequest: Int,
+    widgetPageRequest: Pair<Int, String>?, widgetDraft: String?, widgetDraftKey: Int,
     onCheckUpdates: () -> Unit, onDismissUpdate: () -> Unit, onDownloadUpdate: (AppUpdate) -> Unit) {
     var page by remember { mutableStateOf("Chat") }
     LaunchedEffect(scheduledTaskOpenRequest) { if (scheduledTaskOpenRequest > 0) page = "Scheduled tasks" }
+    LaunchedEffect(widgetPageRequest?.first) { widgetPageRequest?.let { page = it.second } }
     var menuOpen by remember { mutableStateOf(false) }
     val status by vm.status.collectAsState()
     val pending by vm.pending.collectAsState()
@@ -162,11 +192,12 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                 (fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 10 }) togetherWith fadeOut(tween(110))
             }, label = "Cina pages") { destination ->
                 when(destination) {
-                    "Chat" -> ChatScreen(vm, onModels = { page = "Models" })
+                    "Chat" -> ChatScreen(vm, onModels = { page = "Models" }, widgetDraft = widgetDraft, widgetDraftKey = widgetDraftKey)
                     "Models" -> ModelsScreen(vm)
                     "Notes" -> NotesScreen(vm)
+                    "Tasks" -> AgentTasksScreen(vm, onOpenChat = { page = "Chat" })
                     "Scheduled tasks" -> ScheduledTasksScreen(vm)
-                    "Memory" -> MemoryScreen(vm)
+                    "Memory" -> MemoryScreen(vm, onOpenChat = { page = "Chat" })
                     "You" -> YouScreen(youProfile, vm::saveYouProfile)
                     else -> SettingsScreen(vm, updateStatus, onCheckUpdates)
                 }
@@ -182,7 +213,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                     Text("cina", fontFamily = FontFamily.Serif, fontSize = 38.sp, color = Ink)
                     Text("A little space to think.", color = Muted, fontSize = 13.sp)
                     Spacer(Modifier.height(42.dp))
-                    listOf("Chat", "Models", "Notes", "Scheduled tasks", "Memory", "Settings").forEach { destination ->
+                    listOf("Chat", "Tasks", "Models", "Notes", "Scheduled tasks", "Memory", "Settings").forEach { destination ->
                         Row(Modifier.fillMaxWidth().clickable { page = destination; menuOpen = false }.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(destination, Modifier.weight(1f), fontSize = 19.sp, color = if(page == destination) Accent else Ink,
                                 fontWeight = if(page == destination) FontWeight.SemiBold else FontWeight.Normal)
@@ -203,7 +234,12 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
     }
     if(pending != null) AlertDialog(onDismissRequest = vm::reject, containerColor = Paper,
         title = { Text("Let Cina do this?") }, text = { Text("${pending!!.request.name}\n${pending!!.request.arguments}") },
-        confirmButton = { TextButton(onClick = vm::approve) { Text("Allow") } },
+        confirmButton = {
+            Row {
+                TextButton(onClick = { vm.approve(always = true) }) { Text("Always allow") }
+                TextButton(onClick = { vm.approve() }) { Text("Allow") }
+            }
+        },
         dismissButton = { TextButton(onClick = vm::reject) { Text("Not now") } })
     if (availableUpdate != null && pending == null) AlertDialog(onDismissRequest = onDismissUpdate, containerColor = Paper,
         title = { Text("Cina update available") },
@@ -220,13 +256,16 @@ private fun RoundControl(symbol: String, description: String, onClick: () -> Uni
 }
 
 @Composable
-private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit) {
+private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, widgetDraft: String?, widgetDraftKey: Int) {
     val chats by vm.chats.collectAsState(); val active by vm.active.collectAsState(); val messages by vm.messages.collectAsState()
     val live by vm.live.collectAsState(); val busy by vm.busy.collectAsState(); val logs by vm.logs.collectAsState()
     val selected by vm.selectedModel.collectAsState(); val models by vm.models.collectAsState()
+    val attachments by vm.attachments.collectAsState()
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) vm.attachFile(uri) }
     val chat = chats.firstOrNull { it.id == active }
     val modelName = models.firstOrNull { it.path == selected }?.name
     var text by remember { mutableStateOf("") }
+    LaunchedEffect(widgetDraftKey) { if (widgetDraftKey > 0) text = widgetDraft.orEmpty() }
     var showChats by remember { mutableStateOf(false) }
     var showLog by remember { mutableStateOf(false) }
     var showOptions by remember { mutableStateOf(false) }
@@ -235,7 +274,7 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { showChats = true }, contentPadding = PaddingValues(0.dp)) {
-                Text(chat?.title ?: "Conversation", maxLines = 1, overflow = TextOverflow.Ellipsis, color = Ink, fontSize = 14.sp)
+                Text(chat?.title ?: "Conversation", modifier = Modifier.widthIn(max = 190.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, color = Ink, fontSize = 14.sp)
                 Spacer(Modifier.width(5.dp)); Text("⌄", color = Muted)
             }
             Spacer(Modifier.weight(1f))
@@ -300,9 +339,12 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit) {
             }
         }
         Surface(color = Paper, shadowElevation = 7.dp) {
+            Column {
+            if (attachments.isNotEmpty()) Text("Files in this chat: ${attachments.take(3).joinToString { it.name }}", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), color = Muted, fontSize = 12.sp, maxLines = 2)
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 15.dp)
                 .background(Color.White, RoundedCornerShape(25.dp)).padding(start = 18.dp, end = 7.dp, top = 5.dp, bottom = 5.dp),
                 verticalAlignment = Alignment.Bottom) {
+                TextButton(onClick = { picker.launch(arrayOf("*/*")) }, enabled = !busy, contentPadding = PaddingValues(0.dp)) { Text("＋", color = Accent, fontSize = 22.sp) }
                 BasicTextField(value = text, onValueChange = { text = it }, modifier = Modifier.weight(1f).padding(vertical = 12.dp),
                     textStyle = TextStyle(color = Ink, fontSize = 16.sp, lineHeight = 22.sp), maxLines = 5,
                     decorationBox = { inner -> Box { if(text.isBlank()) Text("Ask Cina anything...", color = Muted, fontSize = 16.sp); inner() } })
@@ -311,6 +353,8 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit) {
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = Accent, contentColor = Color.White), modifier = Modifier.size(42.dp)) {
                     Text(if(busy) "■" else "↑", fontSize = if(busy) 16.sp else 23.sp)
                 }
+            }
+            if (text.isNotBlank() && !busy) TextButton(onClick = { vm.startGoal(text); text = "" }, modifier = Modifier.align(Alignment.End).padding(end = 18.dp)) { Text("Start as goal") }
             }
         }
     }
@@ -378,6 +422,7 @@ private fun PaperRow(title: String, detail: String, action: String, onClick: () 
 @Composable
 private fun ModelsScreen(vm: AssistantViewModel) {
     val models by vm.models.collectAsState(); val selected by vm.selectedModel.collectAsState(); val download by vm.download.collectAsState()
+    val benchmarks by vm.benchmarks.collectAsState(); val benchmarking by vm.benchmarking.collectAsState()
     val resumable by vm.resumable.collectAsState(); val repos by vm.repoResults.collectAsState(); val files by vm.remoteFiles.collectAsState()
     var query by remember { mutableStateOf("") }; var directUrl by remember { mutableStateOf("") }; var directName by remember { mutableStateOf("") }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) vm.import(uri) }
@@ -394,9 +439,19 @@ private fun ModelsScreen(vm: AssistantViewModel) {
         SectionTitle("Recommended")
         CuratedModels.entries.forEach { remote -> PaperRow(remote.name, "${remote.repo} · ${vm.library.suitability(remote.size)}", "Get") { vm.download(remote.url, remote.name) } }
         Spacer(Modifier.height(6.dp)); SectionTitle("On this phone")
+        Text("Test installed models on this phone for speed and three basic Cina tasks. These checks are a guide, not a full quality rating.", color = Muted, fontSize = 12.sp)
+        val fastest = benchmarks.mapNotNull { result -> benchmarkTokensPerSecond(result.result)?.let { result.modelPath to it } }.maxByOrNull { it.second }
+        if(fastest != null) Text("Fastest tested: ${models.firstOrNull { it.path == fastest.first }?.name ?: "Model"} · ${"%.1f".format(fastest.second)} tokens/s", color = Accent, fontSize = 13.sp)
+        val bestForCina = benchmarks.filter { result -> models.any { it.path == result.modelPath } }.maxWithOrNull(compareBy<ModelBenchmark> { benchmarkTaskScore(it.result) ?: -1 }.thenBy { benchmarkTokensPerSecond(it.result) ?: 0.0 })
+        if(bestForCina != null) Text("Best tested for Cina tasks: ${models.firstOrNull { it.path == bestForCina.modelPath }?.name ?: "Model"} · ${benchmarkTaskScore(bestForCina.result) ?: 0}/3 checks", color = Accent, fontSize = 13.sp)
         if(models.isEmpty()) Text("No models yet.", color = Muted)
         models.forEach { model ->
             PaperRow(model.name, sizeLabel(model.bytes), if(model.path == selected) "Selected" else "Use") { if(model.path != selected) vm.setModel(model.path) }
+            val benchmark = benchmarks.firstOrNull { it.modelPath == model.path }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { vm.runBenchmark(model) }, enabled = benchmarking == null) { Text(if(benchmarking == model.path) "Testing…" else "Benchmark") }
+                if(benchmark != null) Text("${benchmarkTokensPerSecond(benchmark.result)?.let { "%.1f".format(it) } ?: "?"} tokens/s · ${benchmarkTaskScore(benchmark.result) ?: "?"}/3 checks", color = Muted, fontSize = 12.sp)
+            }
             TextButton(onClick = { vm.removeModel(model) }, enabled = model.path != selected) { Text("Remove", color = Muted, fontSize = 12.sp) }
         }
         OutlinedButton(onClick = { picker.launch(arrayOf("application/octet-stream", "*/*")) }) { Text("Import a GGUF file") }
@@ -411,10 +466,14 @@ private fun ModelsScreen(vm: AssistantViewModel) {
     }
 }
 
+private fun benchmarkTokensPerSecond(result: String): Double? = Regex("\\| tg 64 \\| ([0-9.]+)").find(result)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+private fun benchmarkTaskScore(result: String): Int? = Regex("Cina task checks: ([0-3])/3").find(result)?.groupValues?.getOrNull(1)?.toIntOrNull()
+
 @Composable
 private fun NotesScreen(vm: AssistantViewModel) {
     val notes by vm.notes.collectAsState(); val reminders by vm.reminders.collectAsState()
     var title by remember { mutableStateOf("") }; var body by remember { mutableStateOf("") }; var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<Note?>(null) }
     Page("Notes & reminders", "Small things worth keeping close.") {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { SectionTitle("Notes"); Spacer(Modifier.weight(1f)); TextButton(onClick = { adding = !adding }) { Text(if(adding) "Close" else "+ Add note") } }
         AnimatedVisibility(adding) {
@@ -425,13 +484,48 @@ private fun NotesScreen(vm: AssistantViewModel) {
             }
         }
         if(notes.isEmpty()) Text("Your notes will appear here.", color = Muted)
-        notes.forEach { note -> PaperRow(note.title, note.body, "Delete") { vm.deleteNote(note.id) } }
+        notes.forEach { note ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text(note.title, fontWeight = FontWeight.SemiBold, color = Ink); Text(note.body, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                TextButton(onClick = { editing = note; title = note.title; body = note.body }) { Text("Edit") }
+                TextButton(onClick = { vm.deleteNote(note.id) }) { Text("Delete", color = Muted) }
+            }
+        }
         Spacer(Modifier.height(8.dp)); SectionTitle("Reminders")
         Text("Ask Cina to set a reminder with a date and time.", color = Muted, fontSize = 13.sp)
         val open = reminders.filter { !it.done }
         if(open.isEmpty()) Text("No upcoming reminders.", color = Muted)
         open.forEach { reminder -> PaperRow(reminder.title, DateFormat.getDateTimeInstance().format(Date(reminder.whenMillis)), "Done") { vm.completeReminder(reminder.id) } }
+        reminders.filter { it.done }.take(5).forEach { reminder -> PaperRow(reminder.title, "Completed", "Undo") { vm.undoReminder(reminder.id) } }
     }
+    editing?.let { note -> AlertDialog(onDismissRequest = { editing = null }, title = { Text("Edit note") }, text = {
+        Column { OutlinedTextField(title, { title = it }, label = { Text("Title") }); OutlinedTextField(body, { body = it }, label = { Text("Note") }) }
+    }, confirmButton = { TextButton(onClick = { vm.editNote(note.id, title, body); editing = null; title = ""; body = "" }) { Text("Save") } }, dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } }) }
+}
+
+@Composable
+private fun AgentTasksScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
+    val tasks by vm.agentTasks.collectAsState()
+    var viewed by remember { mutableStateOf<AgentTask?>(null) }
+    Page("Tasks", "Goals and action history stay on this phone. Continue a paused goal whenever you return.") {
+        if (tasks.isEmpty()) Text("Start a goal from a chat to track its progress here.", color = Muted)
+        tasks.forEach { task ->
+            Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(16.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(task.goal, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(task.status.replaceFirstChar { it.uppercase() } + " · " + DateFormat.getDateTimeInstance().format(Date(task.updatedAt)), color = Muted, fontSize = 12.sp)
+                if (task.lastResult.isNotBlank()) Text(task.lastResult, color = Muted, fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Row {
+                    TextButton(onClick = { viewed = task }) { Text("History") }
+                    TextButton(onClick = { vm.resumeGoal(task.id); onOpenChat() }) { Text(if(task.status == "done") "Follow up" else "Continue") }
+                    if(task.status == "active") TextButton(onClick = { vm.pauseGoal(task.id) }) { Text("Pause") }
+                    if(task.status != "done") TextButton(onClick = { vm.completeGoal(task.id) }) { Text("Complete") }
+                }
+            }
+        }
+    }
+    viewed?.let { task -> AlertDialog(onDismissRequest = { viewed = null }, title = { Text("Task history") }, text = {
+        Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) { vm.taskEvents(task.id).forEach { Text(it, Modifier.padding(vertical = 6.dp), color = Ink) } }
+    }, confirmButton = { TextButton(onClick = { viewed = null }) { Text("Done") } }) }
 }
 
 @Composable
@@ -509,16 +603,28 @@ private fun ScheduledTasksScreen(vm: AssistantViewModel) {
 }
 
 @Composable
-private fun MemoryScreen(vm: AssistantViewModel) {
+private fun MemoryScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
     val memories by vm.memories.collectAsState(); val enabled by vm.memoryEnabled.collectAsState()
+    val suggestions by vm.memorySuggestions.collectAsState()
     var editing by remember { mutableStateOf<Memory?>(null) }; var draft by remember { mutableStateOf("") }
     Page("Memory", "You decide what Cina remembers. Everything stays on this phone.") {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Remember useful details", Modifier.weight(1f), color = Ink); Switch(enabled, onCheckedChange = vm::setMemoryEnabled) }
         HorizontalDivider(color = Line)
+        if (suggestions.isNotEmpty()) SectionTitle("Suggested memories")
+        suggestions.forEach { suggestion ->
+            Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(14.dp)).padding(12.dp)) {
+                Text(suggestion.fact, color = Ink)
+                TextButton(onClick = { vm.openChat(suggestion.sourceChatId); onOpenChat() }) { Text("Open source chat") }
+                Row { TextButton(onClick = { vm.approveMemory(suggestion.id) }) { Text("Remember") }; TextButton(onClick = { vm.dismissMemory(suggestion.id) }) { Text("Dismiss") } }
+            }
+        }
         if(memories.isEmpty()) Text("Nothing saved yet.", color = Muted)
         memories.forEach { memory ->
             Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(memory.fact, color = Ink, fontSize = 15.sp, lineHeight = 22.sp)
+                memory.sourceChatId?.let { sourceId ->
+                    TextButton(onClick = { vm.openChat(sourceId); onOpenChat() }) { Text("Open source chat") }
+                }
                 Row { TextButton(onClick = { editing = memory; draft = memory.fact }) { Text("Edit") }; TextButton(onClick = { vm.deleteMemory(memory.id) }) { Text("Delete", color = Muted) } }
             }
             HorizontalDivider(color = Line)
@@ -536,6 +642,9 @@ private fun SettingsScreen(vm: AssistantViewModel, updateStatus: String, onCheck
     var hf by remember { mutableStateOf("") }; var brave by remember { mutableStateOf("") }
     val profile by vm.youProfile.collectAsState()
     val connections by vm.connections.collectAsState()
+    val defaultWeb by vm.defaultWeb.collectAsState()
+    val defaultYolo by vm.defaultYolo.collectAsState()
+    val alwaysAllowed by vm.alwaysAllowed.collectAsState()
     var expandedConnection by remember { mutableStateOf<String?>(null) }
     var mcpToken by remember { mutableStateOf("") }
     var customName by remember { mutableStateOf("") }
@@ -543,6 +652,17 @@ private fun SettingsScreen(vm: AssistantViewModel, updateStatus: String, onCheck
     var customToken by remember { mutableStateOf("") }
     Page("Settings", "Just the essentials. Cina's conversations and personal data stay on your phone.") {
         CompanionSettings(profile, vm::saveCompanionSettings)
+        HorizontalDivider(color = Line); Spacer(Modifier.height(4.dp))
+        SectionTitle("New chats")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Web search", Modifier.weight(1f), color = Ink)
+            Switch(defaultWeb, onCheckedChange = vm::setDefaultWeb)
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("YOLO mode", Modifier.weight(1f), color = Ink)
+            Switch(defaultYolo, onCheckedChange = vm::setDefaultYolo)
+        }
+        Text("These choices apply when you create a new chat. YOLO mode runs actions without asking.", color = Muted, fontSize = 12.sp)
         HorizontalDivider(color = Line); Spacer(Modifier.height(4.dp))
         SectionTitle("App updates")
         Text("Version ${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 13.sp)
@@ -561,7 +681,16 @@ private fun SettingsScreen(vm: AssistantViewModel, updateStatus: String, onCheck
         Text("Keys are encrypted and stored on this device.", color = Muted, fontSize = 12.sp)
         HorizontalDivider(color = Line); Spacer(Modifier.height(4.dp))
         SectionTitle("Connected tools")
-        Text("Connect a service to let Cina use its available tools. Each action asks before it runs unless YOLO mode is on.", color = Muted, fontSize = 13.sp)
+        Text("Connect a service to let Cina use its available tools. Actions ask before they run unless you always allow that tool or enable YOLO mode.", color = Muted, fontSize = 13.sp)
+        if (alwaysAllowed.isNotEmpty()) {
+            Text("Always allowed tools", color = Ink, fontWeight = FontWeight.SemiBold)
+            alwaysAllowed.sorted().forEach { key ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(key.removePrefix("local:").removePrefix("mcp:").replace(":", " · "), Modifier.weight(1f), color = Muted, fontSize = 12.sp)
+                    TextButton(onClick = { vm.revokeAlwaysAllowed(key) }) { Text("Ask again") }
+                }
+            }
+        }
         Text("Sign in with Linear directly. Other services currently need a token; Google Workspace also requires Google Cloud OAuth setup.", color = Muted, fontSize = 12.sp)
         Text("Add an MCP server", color = Ink, fontWeight = FontWeight.SemiBold)
         Text("Use the HTTPS URL from a Claude or Codex MCP setup. Servers configured with a local command need a hosted HTTP endpoint.", color = Muted, fontSize = 12.sp)

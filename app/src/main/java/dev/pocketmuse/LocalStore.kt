@@ -5,7 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.content.ContentValues
 
-class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 2) {
+class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE chats(id INTEGER PRIMARY KEY, title TEXT NOT NULL, web INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL, time INTEGER NOT NULL)")
@@ -15,15 +15,38 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         db.execSQL("CREATE TABLE models(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, source TEXT NOT NULL, bytes INTEGER NOT NULL)")
         db.execSQL("CREATE TABLE actions(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, text TEXT NOT NULL, time INTEGER NOT NULL)")
         createScheduledTasks(db)
+        createAgentTables(db)
+        createChatSummaries(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createScheduledTasks(db)
+        if (oldVersion < 3) createAgentTables(db)
+        if (oldVersion < 4) createChatSummaries(db)
     }
     private fun createScheduledTasks(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE scheduled_tasks(id INTEGER PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL, model_path TEXT NOT NULL, next_run_ms INTEGER NOT NULL, repeat_rule TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_run_ms INTEGER, last_result TEXT, last_error TEXT)")
     }
+    private fun createAgentTables(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE memories ADD COLUMN source_chat_id INTEGER")
+        db.execSQL("ALTER TABLE memories ADD COLUMN source_message_id INTEGER")
+        db.execSQL("CREATE TABLE agent_tasks(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, goal TEXT NOT NULL, status TEXT NOT NULL, last_result TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE task_events(id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, detail TEXT NOT NULL, time INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE memory_suggestions(id INTEGER PRIMARY KEY, fact TEXT NOT NULL, source_chat_id INTEGER NOT NULL, source_message_id INTEGER NOT NULL, UNIQUE(fact,source_chat_id))")
+        db.execSQL("CREATE TABLE attachments(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, name TEXT NOT NULL, mime_type TEXT NOT NULL, text_length INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE attachment_chunks(id INTEGER PRIMARY KEY, attachment_id INTEGER NOT NULL, chunk_index INTEGER NOT NULL, body TEXT NOT NULL)")
+        db.execSQL("CREATE INDEX attachment_chunks_owner ON attachment_chunks(attachment_id)")
+        db.execSQL("CREATE TABLE model_benchmarks(model_path TEXT PRIMARY KEY, result TEXT NOT NULL, measured_at INTEGER NOT NULL)")
+    }
+    private fun createChatSummaries(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE chat_summaries(chat_id INTEGER PRIMARY KEY, body TEXT NOT NULL, through_message_id INTEGER NOT NULL)")
+    }
 
-    @Synchronized fun newChat(): Long = writableDatabase.insertOrThrow("chats", null, ContentValues().apply { put("title", "New chat") })
+    @Synchronized fun newChat(web: Boolean = false, yolo: Boolean = false): Long = writableDatabase.insertOrThrow("chats", null, ContentValues().apply {
+        put("title", "New chat"); put("web", if (web) 1 else 0); put("yolo", if (yolo) 1 else 0)
+    })
+    @Synchronized fun setChatTitle(id: Long, title: String) {
+        writableDatabase.update("chats", ContentValues().apply { put("title", title) }, "id=? AND title='New chat'", arrayOf(id.toString()))
+    }
     @Synchronized fun chats(): List<Chat> = buildList {
         readableDatabase.rawQuery("SELECT id,title,web,yolo FROM chats ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Chat(c.getLong(0), c.getString(1), c.getInt(2) != 0, c.getInt(3) != 0)) }
     }
@@ -35,7 +58,6 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
     @Synchronized fun endChat(id: Long) = setChatFlag(id, "yolo", false)
     @Synchronized fun addMessage(chatId: Long, role: String, body: String): Long {
         val id = writableDatabase.insertOrThrow("messages", null, ContentValues().apply { put("chat_id", chatId); put("role", role); put("body", body); put("time", System.currentTimeMillis()) })
-        if (role == "user") writableDatabase.execSQL("UPDATE chats SET title=? WHERE id=? AND title='New chat'", arrayOf<Any>(body.take(42), chatId))
         return id
     }
     @Synchronized fun messages(chatId: Long): List<Message> = buildList {
@@ -44,9 +66,13 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
     @Synchronized fun addNote(title: String, body: String): Long = writableDatabase.insertOrThrow("notes", null, ContentValues().apply { put("title", title); put("body", body) })
     @Synchronized fun notes(): List<Note> = buildList { readableDatabase.rawQuery("SELECT id,title,body FROM notes ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Note(c.getLong(0), c.getString(1), c.getString(2))) } }
     @Synchronized fun deleteNote(id: Long) { writableDatabase.delete("notes", "id=?", arrayOf(id.toString())) }
+    @Synchronized fun updateNote(id: Long, title: String, body: String) { writableDatabase.update("notes", ContentValues().apply { put("title", title); put("body", body) }, "id=?", arrayOf(id.toString())) }
     @Synchronized fun addReminder(title: String, whenMillis: Long): Long = writableDatabase.insertOrThrow("reminders", null, ContentValues().apply { put("title", title); put("when_ms", whenMillis); put("done", 0) })
     @Synchronized fun reminders(): List<Reminder> = buildList { readableDatabase.rawQuery("SELECT id,title,when_ms,done FROM reminders ORDER BY when_ms", null).use { c -> while(c.moveToNext()) add(Reminder(c.getLong(0), c.getString(1), c.getLong(2), c.getInt(3) != 0)) } }
     @Synchronized fun completeReminder(id: Long) { writableDatabase.update("reminders", ContentValues().apply { put("done", 1) }, "id=?", arrayOf(id.toString())) }
+    @Synchronized fun setReminderDone(id: Long, done: Boolean) { writableDatabase.update("reminders", ContentValues().apply { put("done", if(done) 1 else 0) }, "id=?", arrayOf(id.toString())) }
+    @Synchronized fun updateReminder(id: Long, title: String, whenMillis: Long) { writableDatabase.update("reminders", ContentValues().apply { put("title", title); put("when_ms", whenMillis) }, "id=?", arrayOf(id.toString())) }
+    @Synchronized fun deleteReminder(id: Long) { writableDatabase.delete("reminders", "id=?", arrayOf(id.toString())) }
     @Synchronized fun addScheduledTask(title: String, prompt: String, modelPath: String, whenMillis: Long, repeat: String): Long =
         writableDatabase.insertOrThrow("scheduled_tasks", null, ContentValues().apply {
             put("title", title); put("prompt", prompt); put("model_path", modelPath); put("next_run_ms", whenMillis)
@@ -73,10 +99,70 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
             if (nextMillis == null) put("enabled", 0) else put("next_run_ms", nextMillis)
         }, "id=? AND next_run_ms=? AND enabled=1", arrayOf(id.toString(), runMillis.toString()))
     }
-    @Synchronized fun addMemory(fact: String) { writableDatabase.insertWithOnConflict("memories", null, ContentValues().apply { put("fact", fact) }, SQLiteDatabase.CONFLICT_IGNORE) }
-    @Synchronized fun memories(): List<Memory> = buildList { readableDatabase.rawQuery("SELECT id,fact FROM memories ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Memory(c.getLong(0), c.getString(1))) } }
+    @Synchronized fun addMemory(fact: String, chatId: Long? = null, messageId: Long? = null) { writableDatabase.insertWithOnConflict("memories", null, ContentValues().apply { put("fact", fact); put("source_chat_id", chatId); put("source_message_id", messageId) }, SQLiteDatabase.CONFLICT_IGNORE) }
+    @Synchronized fun memories(): List<Memory> = buildList { readableDatabase.rawQuery("SELECT id,fact,source_chat_id,source_message_id FROM memories ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Memory(c.getLong(0), c.getString(1), if(c.isNull(2)) null else c.getLong(2), if(c.isNull(3)) null else c.getLong(3))) } }
     @Synchronized fun updateMemory(id: Long, fact: String) { writableDatabase.update("memories", ContentValues().apply { put("fact", fact) }, "id=?", arrayOf(id.toString())) }
     @Synchronized fun deleteMemory(id: Long) { writableDatabase.delete("memories", "id=?", arrayOf(id.toString())) }
+    @Synchronized fun suggestMemory(fact: String, chatId: Long, messageId: Long) {
+        writableDatabase.insertWithOnConflict("memory_suggestions", null, ContentValues().apply { put("fact", fact); put("source_chat_id", chatId); put("source_message_id", messageId) }, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+    @Synchronized fun memorySuggestions(): List<MemorySuggestion> = buildList {
+        readableDatabase.rawQuery("SELECT id,fact,source_chat_id,source_message_id FROM memory_suggestions ORDER BY id DESC", null).use { c ->
+            while(c.moveToNext()) add(MemorySuggestion(c.getLong(0), c.getString(1), c.getLong(2), c.getLong(3)))
+        }
+    }
+    @Synchronized fun dismissMemorySuggestion(id: Long) { writableDatabase.delete("memory_suggestions", "id=?", arrayOf(id.toString())) }
+    @Synchronized fun startAgentTask(chatId: Long, goal: String): Long = writableDatabase.insertOrThrow("agent_tasks", null, ContentValues().apply {
+        put("chat_id", chatId); put("goal", goal); put("status", "active"); put("updated_at", System.currentTimeMillis())
+    })
+    @Synchronized fun agentTasks(): List<AgentTask> = buildList {
+        readableDatabase.rawQuery("SELECT id,chat_id,goal,status,last_result,updated_at FROM agent_tasks ORDER BY updated_at DESC", null).use { c ->
+            while(c.moveToNext()) add(AgentTask(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getLong(5)))
+        }
+    }
+    @Synchronized fun activeAgentTask(chatId: Long): AgentTask? = agentTasks().firstOrNull { it.chatId == chatId && it.status in setOf("active", "waiting") }
+    @Synchronized fun updateAgentTask(id: Long, status: String, result: String) {
+        writableDatabase.update("agent_tasks", ContentValues().apply { put("status", status); put("last_result", result.take(4000)); put("updated_at", System.currentTimeMillis()) }, "id=?", arrayOf(id.toString()))
+    }
+    @Synchronized fun addTaskEvent(id: Long, detail: String) { writableDatabase.insertOrThrow("task_events", null, ContentValues().apply { put("task_id", id); put("detail", detail.take(2000)); put("time", System.currentTimeMillis()) }) }
+    @Synchronized fun taskEvents(id: Long): List<String> = buildList { readableDatabase.rawQuery("SELECT detail FROM task_events WHERE task_id=? ORDER BY id", arrayOf(id.toString())).use { c -> while(c.moveToNext()) add(c.getString(0)) } }
+    @Synchronized fun addAttachment(chatId: Long, name: String, mimeType: String, chunks: List<String>): Long {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val id = db.insertOrThrow("attachments", null, ContentValues().apply { put("chat_id", chatId); put("name", name); put("mime_type", mimeType); put("text_length", chunks.sumOf { it.length }) })
+            chunks.forEachIndexed { index, body -> db.insertOrThrow("attachment_chunks", null, ContentValues().apply { put("attachment_id", id); put("chunk_index", index); put("body", body) }) }
+            db.setTransactionSuccessful()
+            return id
+        } finally { db.endTransaction() }
+    }
+    @Synchronized fun attachments(chatId: Long): List<ChatAttachment> = buildList {
+        readableDatabase.rawQuery("SELECT id,chat_id,name,mime_type,text_length FROM attachments WHERE chat_id=? ORDER BY id DESC", arrayOf(chatId.toString())).use { c ->
+            while(c.moveToNext()) add(ChatAttachment(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getInt(4)))
+        }
+    }
+    @Synchronized fun searchAttachments(chatId: Long, query: String, limit: Int = 5): List<AttachmentHit> {
+        val words = query.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 3 }.distinct().take(10)
+        if(words.isEmpty()) return emptyList()
+        val hits = mutableListOf<Pair<Int, AttachmentHit>>()
+        readableDatabase.rawQuery("SELECT a.id,a.name,c.chunk_index,c.body FROM attachments a JOIN attachment_chunks c ON c.attachment_id=a.id WHERE a.chat_id=?", arrayOf(chatId.toString())).use { c ->
+            while(c.moveToNext()) {
+                val body = c.getString(3)
+                val score = words.count { body.contains(it, ignoreCase = true) }
+                if(score > 0) hits.add(score to AttachmentHit(c.getLong(0), c.getString(1), c.getInt(2), body))
+            }
+        }
+        return hits.sortedByDescending { it.first }.take(limit.coerceIn(1, 10)).map { it.second }
+    }
+    @Synchronized fun attachmentPreview(chatId: Long): List<AttachmentHit> = buildList {
+        readableDatabase.rawQuery("SELECT a.id,a.name,c.chunk_index,c.body FROM attachments a JOIN attachment_chunks c ON c.attachment_id=a.id WHERE a.chat_id=? AND c.chunk_index<2 ORDER BY a.id DESC,c.chunk_index LIMIT 2", arrayOf(chatId.toString())).use { c ->
+            while(c.moveToNext()) add(AttachmentHit(c.getLong(0), c.getString(1), c.getInt(2), c.getString(3)))
+        }
+    }
+    @Synchronized fun saveBenchmark(path: String, result: String) { writableDatabase.insertWithOnConflict("model_benchmarks", null, ContentValues().apply { put("model_path", path); put("result", result); put("measured_at", System.currentTimeMillis()) }, SQLiteDatabase.CONFLICT_REPLACE) }
+    @Synchronized fun benchmarks(): List<ModelBenchmark> = buildList { readableDatabase.rawQuery("SELECT model_path,result,measured_at FROM model_benchmarks", null).use { c -> while(c.moveToNext()) add(ModelBenchmark(c.getString(0), c.getString(1), c.getLong(2))) } }
+    @Synchronized fun chatSummary(chatId: Long): ChatSummary? = readableDatabase.rawQuery("SELECT body,through_message_id FROM chat_summaries WHERE chat_id=?", arrayOf(chatId.toString())).use { c -> if(c.moveToFirst()) ChatSummary(chatId, c.getString(0), c.getLong(1)) else null }
+    @Synchronized fun saveChatSummary(chatId: Long, body: String, throughMessageId: Long) { writableDatabase.insertWithOnConflict("chat_summaries", null, ContentValues().apply { put("chat_id", chatId); put("body", body.take(1600)); put("through_message_id", throughMessageId) }, SQLiteDatabase.CONFLICT_REPLACE) }
     @Synchronized fun addModel(name: String, path: String, source: String, bytes: Long) { writableDatabase.insertWithOnConflict("models", null, ContentValues().apply { put("name", name); put("path", path); put("source", source); put("bytes", bytes) }, SQLiteDatabase.CONFLICT_REPLACE) }
     @Synchronized fun models(): List<LocalModel> = buildList { readableDatabase.rawQuery("SELECT id,name,path,source,bytes FROM models ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(LocalModel(c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getLong(4))) } }
     @Synchronized fun deleteModel(id: Long) { writableDatabase.delete("models", "id=?", arrayOf(id.toString())) }

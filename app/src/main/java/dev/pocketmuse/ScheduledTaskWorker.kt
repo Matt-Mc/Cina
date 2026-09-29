@@ -81,6 +81,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
             val next = ScheduledTaskScheduler.nextRun(scheduledFor, task.repeat)
             val error = outcome.exceptionOrNull()?.message?.take(300) ?: if (outcome.isFailure) "The model could not run." else null
             store.finishScheduledTask(id, scheduledFor, outcome.getOrNull(), error, next)
+            TodayWidget.updateAll(applicationContext)
             val updated = store.scheduledTask(id)
             if (updated?.enabled == true && updated.nextRunMillis == next) ScheduledTaskScheduler.schedule(applicationContext, updated)
             showNotification(task, outcome.getOrNull(), error)

@@ -1,0 +1,5 @@
+<resources>
+    <string name="widget_quick_note_description">Save a note to Cina</string>
+    <string name="widget_ask_cina_description">Start a new Cina chat</string>
+    <string name="widget_today_description">See reminders and the latest scheduled task result</string>
+</resources>

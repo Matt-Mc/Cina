@@ -30,8 +30,10 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         For example, to save a note: [tool]{"name":"create_note","arguments":{"title":"Groceries","body":"Buy milk"}}[/tool]
         After a tool result, you may call another tool or give the user a final answer.
         Available tools:
-        create_note(title:string, body:string); search_notes(query:string); create_reminder(title:string, when_iso:string);
-        search_reminders(query:string); create_scheduled_task(title:string, prompt:string, when_iso:string, repeat:"once"|"daily"|"weekly");
+        create_note(title:string, body:string); search_notes(query:string); edit_note(id:int,title:string,body:string); delete_note(id:int);
+        create_reminder(title:string, when_iso:string); search_reminders(query:string); complete_reminder(id:int); reschedule_reminder(id:int,title:string,when_iso:string);
+        search_attachments(query:string): find passages in files attached to this chat, with file and passage references;
+        create_scheduled_task(title:string, prompt:string, when_iso:string, repeat:"once"|"daily"|"weekly");
         list_scheduled_tasks(); create_calendar_event(title:string, start_iso:string, end_iso:string);
         set_alarm(hour:int, minute:int, message:string); share_text(text:string); web_search(query:string).
         mcp_find(query:string): find tools in connected services. Then use mcp_call(server:string, tool:string, arguments:object) with an exact listed tool name and its input schema.
@@ -49,7 +51,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         val obj = JSONObject(match.groupValues[1])
         return ToolRequest(obj.getString("name"), obj.getJSONObject("arguments"))
     }
-    fun needsConfirmation(request: ToolRequest) = request.name !in setOf("search_notes", "search_reminders", "list_scheduled_tasks", "web_search", "mcp_find")
+    fun needsConfirmation(request: ToolRequest) = request.name !in setOf("search_notes", "search_reminders", "search_attachments", "list_scheduled_tasks", "web_search", "mcp_find")
     fun describe(request: ToolRequest): String = "${request.name}: ${request.arguments}"
 
     suspend fun execute(chat: Chat, request: ToolRequest): String = withContext(Dispatchers.IO) {
@@ -59,7 +61,15 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         val result = when(request.name) {
             "create_note" -> { val title = required("title"); val body = required("body"); store.addNote(title, body); "Note saved: $title" }
             "search_notes" -> {
-                val q = required("query"); store.notes().filter { it.title.contains(q, true) || it.body.contains(q, true) }.take(8).joinToString("\n") { "${it.title}: ${it.body.take(500)}" }.ifBlank { "No matching notes." }
+                val q = required("query"); store.notes().filter { it.title.contains(q, true) || it.body.contains(q, true) }.take(8).joinToString("\n") { "#${it.id} ${it.title}: ${it.body.take(500)}" }.ifBlank { "No matching notes." }
+            }
+            "edit_note" -> {
+                val id = a.getLong("id"); require(store.notes().any { it.id == id }) { "Note not found." }
+                store.updateNote(id, required("title"), required("body")); "Note #$id updated."
+            }
+            "delete_note" -> {
+                val id = a.getLong("id"); require(store.notes().any { it.id == id }) { "Note not found." }
+                store.deleteNote(id); "Note #$id deleted."
             }
             "create_reminder" -> {
                 val title = required("title"); val whenMillis = Instant.parse(required("when_iso")).toEpochMilli()
@@ -69,7 +79,21 @@ class AssistantTools(private val context: Context, private val store: LocalStore
                 "Reminder saved for ${Instant.ofEpochMilli(whenMillis)}: $title"
             }
             "search_reminders" -> {
-                val q = required("query"); store.reminders().filter { !it.done && it.title.contains(q, true) }.take(8).joinToString("\n") { "${it.title}: ${Instant.ofEpochMilli(it.whenMillis)}" }.ifBlank { "No matching reminders." }
+                val q = required("query"); store.reminders().filter { !it.done && it.title.contains(q, true) }.take(8).joinToString("\n") { "#${it.id} ${it.title}: ${Instant.ofEpochMilli(it.whenMillis)}" }.ifBlank { "No matching reminders." }
+            }
+            "complete_reminder" -> {
+                val id = a.getLong("id"); require(store.reminders().any { it.id == id && !it.done }) { "Open reminder not found." }
+                store.completeReminder(id); ReminderReceiver.cancel(context, id); "Reminder #$id completed."
+            }
+            "reschedule_reminder" -> {
+                val id = a.getLong("id"); val title = required("title"); val time = Instant.parse(required("when_iso")).toEpochMilli()
+                require(time > System.currentTimeMillis() && store.reminders().any { it.id == id && !it.done }) { "Choose an existing open reminder and a future time." }
+                ReminderReceiver.cancel(context, id); store.updateReminder(id, title, time); ReminderReceiver.schedule(context, id, title, time)
+                "Reminder #$id rescheduled to ${Instant.ofEpochMilli(time)}."
+            }
+            "search_attachments" -> {
+                val q = required("query")
+                store.searchAttachments(chat.id, q).joinToString("\n\n") { "${it.name}, passage ${it.chunk + 1}: ${it.body.take(1200)}" }.ifBlank { "No relevant passages in this chat's attached files." }
             }
             "create_scheduled_task" -> {
                 val title = required("title").take(100)
