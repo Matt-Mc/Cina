@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
         handleWidgetIntent(intent)
         intent.data?.takeIf { it.scheme == "dev.pocketmuse.cina" }?.let(vm::finishLinearSignIn)
     }
-    override fun onResume() { super.onResume(); vm.refresh(); TodayWidget.updateAll(this) }
+    override fun onResume() { super.onResume(); ReminderReceiver.recover(this); vm.refresh(); TodayWidget.updateAll(this) }
     override fun onStop() { vm.endSession(); super.onStop() }
 
     private fun handleWidgetIntent(intent: Intent?) {

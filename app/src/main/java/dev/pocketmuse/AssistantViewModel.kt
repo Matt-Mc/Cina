@@ -177,7 +177,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun deleteNote(id: Long) { store.deleteNote(id); refresh() }
     fun editNote(id: Long, title: String, body: String) { if(title.isNotBlank() && body.isNotBlank()) { store.updateNote(id, title.trim(), body.trim()); refresh() } }
     fun completeReminder(id: Long) { store.completeReminder(id); ReminderReceiver.cancel(getApplication(), id); refresh() }
-    fun undoReminder(id: Long) { store.setReminderDone(id, false); store.reminders().firstOrNull { it.id == id }?.takeIf { it.whenMillis > System.currentTimeMillis() }?.let { ReminderReceiver.schedule(getApplication(), id, it.title, it.whenMillis) }; refresh() }
+    fun undoReminder(id: Long) { store.setReminderDone(id, false); store.reminders().firstOrNull { it.id == id }?.takeIf { it.whenMillis > System.currentTimeMillis() }?.let { ReminderReceiver.schedule(getApplication(), id, it.whenMillis) }; refresh() }
     fun addScheduledTask(title: String, prompt: String, whenMillis: Long, repeat: String) {
         val model = _selectedModel.value ?: run { _status.value = "Choose a model before scheduling a task."; return }
         if (title.isBlank() || prompt.isBlank() || whenMillis <= System.currentTimeMillis() || repeat !in listOf("once", "daily", "weekly")) {

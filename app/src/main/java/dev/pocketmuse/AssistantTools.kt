@@ -75,7 +75,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
                 val title = required("title"); val whenMillis = Instant.parse(required("when_iso")).toEpochMilli()
                 require(whenMillis > System.currentTimeMillis()) { "Reminder time must be in the future." }
                 val id = store.addReminder(title, whenMillis)
-                ReminderReceiver.schedule(context, id, title, whenMillis)
+                ReminderReceiver.schedule(context, id, whenMillis)
                 "Reminder saved for ${Instant.ofEpochMilli(whenMillis)}: $title"
             }
             "search_reminders" -> {
@@ -88,7 +88,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
             "reschedule_reminder" -> {
                 val id = a.getLong("id"); val title = required("title"); val time = Instant.parse(required("when_iso")).toEpochMilli()
                 require(time > System.currentTimeMillis() && store.reminders().any { it.id == id && !it.done }) { "Choose an existing open reminder and a future time." }
-                ReminderReceiver.cancel(context, id); store.updateReminder(id, title, time); ReminderReceiver.schedule(context, id, title, time)
+                ReminderReceiver.cancel(context, id); store.updateReminder(id, title, time); ReminderReceiver.schedule(context, id, time)
                 "Reminder #$id rescheduled to ${Instant.ofEpochMilli(time)}."
             }
             "search_attachments" -> {
