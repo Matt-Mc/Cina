@@ -5,12 +5,12 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.content.ContentValues
 
-class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 4) {
+class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 5) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE chats(id INTEGER PRIMARY KEY, title TEXT NOT NULL, web INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL, time INTEGER NOT NULL)")
         db.execSQL("CREATE TABLE notes(id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL)")
-        db.execSQL("CREATE TABLE reminders(id INTEGER PRIMARY KEY, title TEXT NOT NULL, when_ms INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
+        db.execSQL("CREATE TABLE reminders(id INTEGER PRIMARY KEY, title TEXT NOT NULL, when_ms INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, notified_ms INTEGER)")
         db.execSQL("CREATE TABLE memories(id INTEGER PRIMARY KEY, fact TEXT NOT NULL UNIQUE)")
         db.execSQL("CREATE TABLE models(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, source TEXT NOT NULL, bytes INTEGER NOT NULL)")
         db.execSQL("CREATE TABLE actions(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, text TEXT NOT NULL, time INTEGER NOT NULL)")
@@ -22,6 +22,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         if (oldVersion < 2) createScheduledTasks(db)
         if (oldVersion < 3) createAgentTables(db)
         if (oldVersion < 4) createChatSummaries(db)
+        if (oldVersion < 5) db.execSQL("ALTER TABLE reminders ADD COLUMN notified_ms INTEGER")
     }
     private fun createScheduledTasks(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE scheduled_tasks(id INTEGER PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL, model_path TEXT NOT NULL, next_run_ms INTEGER NOT NULL, repeat_rule TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_run_ms INTEGER, last_result TEXT, last_error TEXT)")
@@ -68,10 +69,16 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
     @Synchronized fun deleteNote(id: Long) { writableDatabase.delete("notes", "id=?", arrayOf(id.toString())) }
     @Synchronized fun updateNote(id: Long, title: String, body: String) { writableDatabase.update("notes", ContentValues().apply { put("title", title); put("body", body) }, "id=?", arrayOf(id.toString())) }
     @Synchronized fun addReminder(title: String, whenMillis: Long): Long = writableDatabase.insertOrThrow("reminders", null, ContentValues().apply { put("title", title); put("when_ms", whenMillis); put("done", 0) })
-    @Synchronized fun reminders(): List<Reminder> = buildList { readableDatabase.rawQuery("SELECT id,title,when_ms,done FROM reminders ORDER BY when_ms", null).use { c -> while(c.moveToNext()) add(Reminder(c.getLong(0), c.getString(1), c.getLong(2), c.getInt(3) != 0)) } }
+    @Synchronized fun reminders(): List<Reminder> = buildList { readableDatabase.rawQuery("SELECT id,title,when_ms,done,notified_ms FROM reminders ORDER BY when_ms", null).use { c -> while(c.moveToNext()) add(Reminder(c.getLong(0), c.getString(1), c.getLong(2), c.getInt(3) != 0, if(c.isNull(4)) null else c.getLong(4))) } }
+    @Synchronized fun claimReminderNotification(id: Long): Boolean = writableDatabase.update("reminders",
+        ContentValues().apply { put("notified_ms", System.currentTimeMillis()) },
+        "id=? AND done=0 AND notified_ms IS NULL", arrayOf(id.toString())) == 1
+    @Synchronized fun clearReminderNotification(id: Long) {
+        writableDatabase.update("reminders", ContentValues().apply { putNull("notified_ms") }, "id=?", arrayOf(id.toString()))
+    }
     @Synchronized fun completeReminder(id: Long) { writableDatabase.update("reminders", ContentValues().apply { put("done", 1) }, "id=?", arrayOf(id.toString())) }
     @Synchronized fun setReminderDone(id: Long, done: Boolean) { writableDatabase.update("reminders", ContentValues().apply { put("done", if(done) 1 else 0) }, "id=?", arrayOf(id.toString())) }
-    @Synchronized fun updateReminder(id: Long, title: String, whenMillis: Long) { writableDatabase.update("reminders", ContentValues().apply { put("title", title); put("when_ms", whenMillis) }, "id=?", arrayOf(id.toString())) }
+    @Synchronized fun updateReminder(id: Long, title: String, whenMillis: Long) { writableDatabase.update("reminders", ContentValues().apply { put("title", title); put("when_ms", whenMillis); putNull("notified_ms") }, "id=?", arrayOf(id.toString())) }
     @Synchronized fun deleteReminder(id: Long) { writableDatabase.delete("reminders", "id=?", arrayOf(id.toString())) }
     @Synchronized fun addScheduledTask(title: String, prompt: String, modelPath: String, whenMillis: Long, repeat: String): Long =
         writableDatabase.insertOrThrow("scheduled_tasks", null, ContentValues().apply {
