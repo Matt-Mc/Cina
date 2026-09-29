@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 
 class AssistantViewModel(application: Application) : AndroidViewModel(application) {
     private val store = LocalStore(application)
+    private val attachmentImporter = AttachmentImporter(application, store)
     private val profileStore = YouProfileStore(application)
     val secrets = SecretStore(application)
     private val mcp = McpConnections(application, secrets)
@@ -31,7 +32,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _chats = MutableStateFlow(store.chats())
     val chats = _chats.asStateFlow()
-    private val _active = MutableStateFlow(_chats.value.firstOrNull()?.id ?: store.newChat().also { _chats.value = store.chats() })
+    private val _active = MutableStateFlow(_chats.value.firstOrNull()?.id ?: createChat().also { _chats.value = store.chats() })
     val active = _active.asStateFlow()
     private val _messages = MutableStateFlow(store.messages(_active.value))
     val messages = _messages.asStateFlow()
@@ -45,6 +46,16 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val scheduledTasks = _scheduledTasks.asStateFlow()
     private val _memories = MutableStateFlow(store.memories())
     val memories = _memories.asStateFlow()
+    private val _memorySuggestions = MutableStateFlow(store.memorySuggestions())
+    val memorySuggestions = _memorySuggestions.asStateFlow()
+    private val _agentTasks = MutableStateFlow(store.agentTasks())
+    val agentTasks = _agentTasks.asStateFlow()
+    private val _attachments = MutableStateFlow(store.attachments(_active.value))
+    val attachments = _attachments.asStateFlow()
+    private val _benchmarks = MutableStateFlow(store.benchmarks())
+    val benchmarks = _benchmarks.asStateFlow()
+    private val _benchmarking = MutableStateFlow<String?>(null)
+    val benchmarking = _benchmarking.asStateFlow()
     private val _logs = MutableStateFlow(store.actionLog(_active.value))
     val logs = _logs.asStateFlow()
     private val _live = MutableStateFlow("")
@@ -59,6 +70,12 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val selectedModel = _selectedModel.asStateFlow()
     private val _memoryEnabled = MutableStateFlow(prefs.getBoolean("memory", true))
     val memoryEnabled = _memoryEnabled.asStateFlow()
+    private val _defaultWeb = MutableStateFlow(prefs.getBoolean("default_web", false))
+    val defaultWeb = _defaultWeb.asStateFlow()
+    private val _defaultYolo = MutableStateFlow(prefs.getBoolean("default_yolo", false))
+    val defaultYolo = _defaultYolo.asStateFlow()
+    private val _alwaysAllowed = MutableStateFlow(prefs.getStringSet("always_allowed_tools", emptySet())?.toSet().orEmpty())
+    val alwaysAllowed = _alwaysAllowed.asStateFlow()
     private val _download = MutableStateFlow(DownloadState())
     val download = _download.asStateFlow()
     private val _resumable = MutableStateFlow(downloadPrefs.getString("url", null)?.let { it to (downloadPrefs.getString("name", null) ?: "model") })
@@ -119,13 +136,29 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
     fun disconnectMcp(id: String) { mcp.disconnect(id); _connections.value = mcp.snapshot(); runtime?.invalidate() }
-    fun refresh() { _chats.value = store.chats(); _messages.value = store.messages(_active.value); _models.value = store.models(); _notes.value = store.notes(); _reminders.value = store.reminders(); _scheduledTasks.value = store.scheduledTasks(); _memories.value = store.memories(); _logs.value = store.actionLog(_active.value) }
-    fun newChat() { stop(); store.endChat(_active.value); _active.value = store.newChat(); refresh() }
+    fun refresh() { _chats.value = store.chats(); _messages.value = store.messages(_active.value); _models.value = store.models(); _notes.value = store.notes(); _reminders.value = store.reminders(); _scheduledTasks.value = store.scheduledTasks(); _memories.value = store.memories(); _memorySuggestions.value = store.memorySuggestions(); _agentTasks.value = store.agentTasks(); _attachments.value = store.attachments(_active.value); _benchmarks.value = store.benchmarks(); _logs.value = store.actionLog(_active.value); TodayWidget.updateAll(getApplication()) }
+    private fun createChat() = store.newChat(prefs.getBoolean("default_web", false), prefs.getBoolean("default_yolo", false))
+    fun newChat() { stop(); store.endChat(_active.value); _active.value = createChat(); refresh() }
     fun openChat(id: Long) { stop(); store.endChat(_active.value); _active.value = id; refresh() }
     fun setFlag(flag: String, enabled: Boolean) { store.setChatFlag(_active.value, flag, enabled); refresh() }
     fun endSession() { store.endChat(_active.value); refresh() }
     fun setModel(path: String) { stop(); runtime?.invalidate(); _selectedModel.value = path; prefs.edit().putString("model", path).apply() }
     fun setMemoryEnabled(enabled: Boolean) { _memoryEnabled.value = enabled; runtime?.invalidate(); prefs.edit().putBoolean("memory", enabled).apply() }
+    fun setDefaultWeb(enabled: Boolean) { _defaultWeb.value = enabled; prefs.edit().putBoolean("default_web", enabled).apply() }
+    fun setDefaultYolo(enabled: Boolean) { _defaultYolo.value = enabled; prefs.edit().putBoolean("default_yolo", enabled).apply() }
+    private fun approvalKey(request: ToolRequest): String? = if (request.name == "mcp_call") {
+        val server = request.arguments.optString("server").trim()
+        val tool = request.arguments.optString("tool").trim()
+        if (server.isEmpty() || tool.isEmpty()) null else "mcp:$server:$tool"
+    } else request.name.takeIf { it.isNotBlank() }?.let { "local:$it" }
+    private fun needsApproval(request: ToolRequest, dispatcher: AssistantTools, chat: Chat): Boolean {
+        val key = approvalKey(request)
+        return dispatcher.needsConfirmation(request) && !chat.yolo && (key == null || key !in _alwaysAllowed.value)
+    }
+    fun revokeAlwaysAllowed(key: String) {
+        _alwaysAllowed.value = _alwaysAllowed.value - key
+        prefs.edit().putStringSet("always_allowed_tools", _alwaysAllowed.value).apply()
+    }
     fun saveYouProfile(profile: YouProfile) = persistYouProfile(profile, "Your profile is saved on this device.")
     fun saveCompanionSettings(profile: YouProfile) = persistYouProfile(profile, "Cina customization saved on this device.")
     private fun persistYouProfile(profile: YouProfile, message: String) {
@@ -142,7 +175,9 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun setKey(type: String, value: String) { secrets.put(type, value); _status.value = "$type key saved on this device." }
     fun addNote(title: String, body: String) { if(title.isNotBlank() && body.isNotBlank()) { store.addNote(title.trim(), body.trim()); refresh() } }
     fun deleteNote(id: Long) { store.deleteNote(id); refresh() }
-    fun completeReminder(id: Long) { store.completeReminder(id); refresh() }
+    fun editNote(id: Long, title: String, body: String) { if(title.isNotBlank() && body.isNotBlank()) { store.updateNote(id, title.trim(), body.trim()); refresh() } }
+    fun completeReminder(id: Long) { store.completeReminder(id); ReminderReceiver.cancel(getApplication(), id); refresh() }
+    fun undoReminder(id: Long) { store.setReminderDone(id, false); store.reminders().firstOrNull { it.id == id }?.takeIf { it.whenMillis > System.currentTimeMillis() }?.let { ReminderReceiver.schedule(getApplication(), id, it.title, it.whenMillis) }; refresh() }
     fun addScheduledTask(title: String, prompt: String, whenMillis: Long, repeat: String) {
         val model = _selectedModel.value ?: run { _status.value = "Choose a model before scheduling a task."; return }
         if (title.isBlank() || prompt.isBlank() || whenMillis <= System.currentTimeMillis() || repeat !in listOf("once", "daily", "weekly")) {
@@ -167,15 +202,61 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun deleteScheduledTask(id: Long) { ScheduledTaskScheduler.cancel(getApplication(), id); store.deleteScheduledTask(id); refresh() }
     fun editMemory(id: Long, fact: String) { if(fact.isNotBlank()) { store.updateMemory(id, fact.trim()); runtime?.invalidate(); refresh() } }
     fun deleteMemory(id: Long) { store.deleteMemory(id); runtime?.invalidate(); refresh() }
+    fun approveMemory(id: Long) { store.memorySuggestions().firstOrNull { it.id == id }?.let { store.addMemory(it.fact, it.sourceChatId, it.sourceMessageId); store.dismissMemorySuggestion(id); runtime?.invalidate(); refresh() } }
+    fun dismissMemory(id: Long) { store.dismissMemorySuggestion(id); refresh() }
+    fun startGoal(goal: String) {
+        if (goal.isBlank() || _busy.value) return
+        if (_models.value.none { it.path == _selectedModel.value }) { _status.value = "Choose a downloaded model before starting a goal."; return }
+        if (store.activeAgentTask(_active.value) != null) { _status.value = "Finish or pause the current goal first."; return }
+        val id = store.startAgentTask(_active.value, goal.trim().take(2000))
+        store.addTaskEvent(id, "Goal started")
+        refresh()
+        send(goal)
+    }
+    fun resumeGoal(id: Long) {
+        val item = store.agentTasks().firstOrNull { it.id == id } ?: return
+        openChat(item.chatId)
+        store.updateAgentTask(id, "active", item.lastResult)
+        refresh()
+        send("Continue this goal: ${item.goal}. Review what has already been done before taking another action.")
+    }
+    fun pauseGoal(id: Long) { store.agentTasks().firstOrNull { it.id == id }?.let { if (it.chatId == _active.value && _busy.value) stop(); store.updateAgentTask(id, "paused", it.lastResult); store.addTaskEvent(id, "Paused by you"); refresh() } }
+    fun completeGoal(id: Long) { store.agentTasks().firstOrNull { it.id == id }?.let { if (it.chatId == _active.value && _busy.value) stop(); store.updateAgentTask(id, "done", it.lastResult); store.addTaskEvent(id, "Marked complete by you"); refresh() } }
+    fun taskEvents(id: Long): List<String> = store.taskEvents(id)
+    fun attachFile(uri: Uri) {
+        val chatId = _active.value
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val attachment = attachmentImporter.import(chatId, uri)
+                store.addMessage(chatId, "user", "Attached ${attachment.name} (${attachment.textLength} characters indexed on this phone).")
+                _status.value = "${attachment.name} is ready. Ask Cina about it."
+                refresh()
+            } catch (e: Exception) { _status.value = e.message ?: "Could not add this file." }
+        }
+    }
+    fun runBenchmark(model: LocalModel) {
+        if (_busy.value || _benchmarking.value != null) return
+        val assistant = runtime ?: return
+        viewModelScope.launch {
+            _benchmarking.value = model.path
+            try {
+                val result = ModelAccess.mutex.withLock { assistant.benchmark(model) }
+                store.saveBenchmark(model.path, result)
+                refresh()
+                _status.value = "Benchmark finished for ${model.name}."
+            } catch (e: Exception) { _status.value = e.message ?: "Benchmark failed." }
+            finally { _benchmarking.value = null }
+        }
+    }
     fun removeModel(model: LocalModel) { if(_selectedModel.value == model.path) { _status.value = "Select another model before deleting this one."; return }; library.remove(model); refresh() }
     fun clearStatus() { _status.value = "" }
 
     fun send(text: String) {
-        if(text.isBlank() || _busy.value || _pending.value != null) return
+        if(text.isBlank() || _busy.value || _benchmarking.value != null || _pending.value != null) return
         val model = _models.value.firstOrNull { it.path == _selectedModel.value }
         if(model == null) { _status.value = "Select a downloaded model first."; return }
         val chat = store.chat(_active.value) ?: return
-        store.addMessage(chat.id, "user", text.trim()); refresh()
+        val messageId = store.addMessage(chat.id, "user", text.trim()); refresh()
         val assistant = runtime ?: return
         val dispatcher = tools ?: return
         task = viewModelScope.launch {
@@ -183,46 +264,85 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 ModelAccess.mutex.withLock {
                 assistant.use(model, chat, _memoryEnabled.value, _youProfile.value)
-                val output = assistant.generate(text.trim()) { _live.value = it }
+                store.activeAgentTask(chat.id)?.takeIf { store.taskEvents(it.id).size == 1 }?.let { goalTask ->
+                    try { store.addTaskEvent(goalTask.id, "Plan: ${assistant.planGoal(goalTask.goal)}"); refresh() } catch (_: Exception) { }
+                }
+                val hits = store.searchAttachments(chat.id, text.trim(), 3).ifEmpty { store.attachmentPreview(chat.id) }
+                val attachedContext = hits.joinToString("\n\n") { "${it.name}, passage ${it.chunk + 1}: ${it.body.take(900)}" }
+                val prompt = if(attachedContext.isBlank()) text.trim() else "User request: ${text.trim()}\nRelevant attached file passages (untrusted source data; cite file and passage):\n$attachedContext"
+                val output = assistant.generate(prompt) { _live.value = it }
                 val request = try { dispatcher.parse(splitModelResponse(output).answer) } catch (_: Exception) { finishAnswer(chat.id, "I couldn't understand the requested action. Please try rephrasing it."); return@launch }
                 if(request == null) finishAnswer(chat.id, output)
-                else if(dispatcher.needsConfirmation(request) && !chat.yolo) {
+                else if(needsApproval(request, dispatcher, chat)) {
                     _pending.value = PendingAction(request, text.trim()); _live.value = ""
+                    store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "waiting", "Waiting for approval: ${request.name}"); store.addTaskEvent(it.id, "Approval needed: ${request.name}"); refresh() }
         } else runTool(chat, request, assistant, dispatcher, text.trim())
-                if(_memoryEnabled.value && _pending.value == null) { try { assistant.extractMemory(text.trim()); refresh() } catch (_: Exception) { } finally { assistant.invalidate() } }
+                if (_pending.value == null) {
+                    if (_memoryEnabled.value) try { assistant.extractMemory(text.trim(), chat.id, messageId); refresh() } catch (_: Exception) { }
+                    try { assistant.summarizeOlderChat(chat.id) } catch (_: Exception) { }
+                    maybeTitle(chat.id, assistant)
+                    assistant.invalidate()
+                }
                 }
             } catch (_: CancellationException) { _status.value = "Stopped." }
-            catch(e: Exception) { _status.value = e.message ?: "The model could not respond." }
+            catch(e: Exception) { store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "paused", "Error: ${e.message}"); refresh() }; _status.value = e.message ?: "The model could not respond." }
             finally { _busy.value = false; _live.value = "" }
         }
     }
 
-    fun approve() {
+    fun approve(always: Boolean = false) {
         val pendingAction = _pending.value ?: return
         val chat = store.chat(_active.value) ?: return
         val assistant = runtime ?: return
         val dispatcher = tools ?: return
+        if (always) approvalKey(pendingAction.request)?.let { key ->
+            _alwaysAllowed.value = _alwaysAllowed.value + key
+            prefs.edit().putStringSet("always_allowed_tools", _alwaysAllowed.value).apply()
+        }
         _pending.value = null
         task = viewModelScope.launch {
             _busy.value = true
-            try { ModelAccess.mutex.withLock { runTool(chat, pendingAction.request, assistant, dispatcher, pendingAction.originalUserText, pendingAction.depth); if(_memoryEnabled.value && _pending.value == null) { try { assistant.extractMemory(pendingAction.originalUserText); refresh() } finally { assistant.invalidate() } } } }
+            try { ModelAccess.mutex.withLock {
+                runTool(chat, pendingAction.request, assistant, dispatcher, pendingAction.originalUserText, pendingAction.depth)
+                if (_pending.value == null) {
+                    if (_memoryEnabled.value) try { assistant.extractMemory(pendingAction.originalUserText, chat.id, store.messages(chat.id).lastOrNull { it.role == "user" }?.id ?: 0); refresh() } catch (_: Exception) { }
+                    try { assistant.summarizeOlderChat(chat.id) } catch (_: Exception) { }
+                    maybeTitle(chat.id, assistant)
+                    assistant.invalidate()
+                }
+            } }
             catch(e: Exception) { _status.value = e.message ?: "Action failed." }
             finally { _busy.value = false; _live.value = "" }
         }
     }
-    fun reject() { _pending.value = null; store.addMessage(_active.value, "assistant", "Action cancelled."); refresh() }
+    fun reject() { _pending.value = null; store.activeAgentTask(_active.value)?.let { store.updateAgentTask(it.id, "paused", "Action cancelled"); store.addTaskEvent(it.id, "Action cancelled") }; store.addMessage(_active.value, "assistant", "Action cancelled."); refresh() }
     private suspend fun runTool(chat: Chat, request: ToolRequest, assistant: AssistantRuntime, dispatcher: AssistantTools, originalUserText: String, depth: Int = 0) {
         val result = try { dispatcher.execute(chat, request) } catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
+        store.activeAgentTask(chat.id)?.let { store.addTaskEvent(it.id, "${request.name}: ${result.take(300)}"); store.updateAgentTask(it.id, "active", result) }
         refresh()
         val response = assistant.generate("Tool result for ${request.name}: $result. Continue the user's request. You may call another tool if needed; otherwise explain the outcome. If web sources appear, include their URLs.") { _live.value = it }
         val next = try { dispatcher.parse(splitModelResponse(response).answer) } catch (_: Exception) { null }
         if (next == null) finishAnswer(chat.id, response)
-        else if (depth >= 2) finishAnswer(chat.id, "I reached the action limit for this request. Last result: ${result.take(1000)}")
-        else if (dispatcher.needsConfirmation(next) && !chat.yolo) { _pending.value = PendingAction(next, originalUserText, depth + 1); _live.value = "" }
+        else if (depth >= if(store.activeAgentTask(chat.id) != null) 7 else 2) {
+            store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "paused", "Action limit reached. Continue this goal to resume."); store.addTaskEvent(it.id, "Paused at action limit") }
+            store.addMessage(chat.id, "assistant", "I reached the action limit for this turn. You can continue the goal from Tasks. Last result: ${result.take(700)}")
+            refresh()
+        }
+        else if (needsApproval(next, dispatcher, chat)) { _pending.value = PendingAction(next, originalUserText, depth + 1); _live.value = ""; store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "waiting", "Waiting for approval: ${next.name}"); store.addTaskEvent(it.id, "Approval needed: ${next.name}") }; refresh() }
         else runTool(chat, next, assistant, dispatcher, originalUserText, depth + 1)
     }
-    private fun finishAnswer(chatId: Long, answer: String) { store.addMessage(chatId, "assistant", answer.ifBlank { "I couldn't produce a response." }); refresh() }
-    fun stop() { task?.cancel(); task = null; _busy.value = false; _pending.value = null; _live.value = "" }
+    private fun finishAnswer(chatId: Long, answer: String) { store.addMessage(chatId, "assistant", answer.ifBlank { "I couldn't produce a response." }); store.activeAgentTask(chatId)?.let { store.updateAgentTask(it.id, "waiting", answer); store.addTaskEvent(it.id, "Cina answered; goal remains open") }; refresh() }
+    private suspend fun maybeTitle(chatId: Long, assistant: AssistantRuntime) {
+        if (store.chat(chatId)?.title != "New chat") return
+        val messages = store.messages(chatId)
+        val firstUser = messages.firstOrNull { it.role == "user" }?.body ?: return
+        val firstAnswer = messages.firstOrNull { it.role == "assistant" }?.body ?: return
+        try {
+            val title = assistant.generateTitle(firstUser, splitModelResponse(firstAnswer).answer)
+            if (title.isNotBlank() && !title.contains("[tool]")) { store.setChatTitle(chatId, title); refresh() }
+        } catch (_: Exception) { assistant.invalidate() }
+    }
+    fun stop() { task?.cancel(); task = null; store.activeAgentTask(_active.value)?.let { store.updateAgentTask(it.id, "paused", "Stopped by user") }; _busy.value = false; _pending.value = null; _live.value = ""; refresh() }
 
     fun import(uri: Uri) { viewModelScope.launch { try { val model = library.import(uri); refresh(); setModel(model.path); _status.value = "Model imported." } catch(e: Exception) { _status.value = e.message ?: "Import failed." } } }
     fun searchRepos(query: String) { viewModelScope.launch { try { _repoResults.value = library.search(query) } catch(e: Exception) { _status.value = e.message ?: "Search failed." } } }

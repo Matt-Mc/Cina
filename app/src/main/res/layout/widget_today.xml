@@ -1,0 +1,12 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/widget_background" android:orientation="vertical" android:padding="16dp">
+    <TextView android:id="@+id/today_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Today with Cina" android:textColor="#4F7562" android:textSize="17sp" android:textStyle="bold" />
+    <TextView android:id="@+id/today_reminders" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:gravity="center_vertical" android:maxLines="3"
+        android:text="No open reminders" android:textColor="#26312C" android:textSize="14sp" />
+    <TextView android:id="@+id/today_task" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:maxLines="2" android:ellipsize="end" android:text="No task results yet"
+        android:textColor="#767E78" android:textSize="12sp" />
+</LinearLayout>

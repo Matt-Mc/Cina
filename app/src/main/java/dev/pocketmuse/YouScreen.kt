@@ -1,15 +1,11 @@
 package dev.pocketmuse
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -22,117 +18,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val petColors = listOf(
-    Color(0xFFFFEAB6), Color(0xFFBFE1CE), Color(0xFFFFC9C0),
-    Color(0xFFC9D8F3), Color(0xFFDCCBEC), Color(0xFFF4D5B2)
-)
 private val dark = Color(0xFF26312C)
 private val quiet = Color(0xFF767E78)
 private val wash = Color(0xFFF0F2EC)
 private val border = Color(0xFFE7E9E2)
-
-@Composable
-fun CompanionBubble(profile: YouProfile, diameter: Dp, modifier: Modifier = Modifier) {
-    val motion = rememberInfiniteTransition(label = "Companion motion")
-    val bob by motion.animateFloat(0f, -3f, infiniteRepeatable(tween(1800), RepeatMode.Reverse), label = "Float")
-    val blink by motion.animateFloat(1f, 1f, infiniteRepeatable(
-        keyframes { durationMillis = 4300; 1f at 0; 1f at 3700; .08f at 3790; 1f at 3950; 1f at 4300 }
-    ), label = "Blink")
-    val ink = Color(0xFF28312D)
-    val eyeInk = Color.Black
-    Canvas(modifier.size(diameter).graphicsLayer { translationY = bob * density }) {
-        val d = size.minDimension
-        val center = Offset(size.width / 2, size.height / 2)
-        val base = petColors[profile.petColor.coerceIn(0, 5)]
-        val light = lerp(base, Color.White, .58f)
-        val shade = lerp(base, Color(0xFF33445A), .38f)
-        drawOval(Color.Black.copy(alpha = .13f), Offset(d * .12f, d * .82f), Size(d * .76f, d * .12f))
-        drawCircle(Color.Black.copy(alpha = .11f), d * .43f, center.copy(y = center.y + d * .035f))
-        drawCircle(
-            brush = Brush.radialGradient(
-                colorStops = arrayOf(0f to light, .43f to base, .78f to lerp(base, shade, .45f), 1f to shade),
-                center = Offset(d * .30f, d * .24f), radius = d * .78f
-            ), radius = d * .43f, center = center
-        )
-        drawCircle(ink.copy(alpha = .8f), d * .43f, center, style = Stroke(width = d * .023f))
-        drawOval(
-            brush = Brush.radialGradient(
-                colors = listOf(Color.White.copy(alpha = .78f), Color.White.copy(alpha = .23f), Color.Transparent),
-                center = Offset(d * .31f, d * .27f), radius = d * .27f
-            ), topLeft = Offset(d * .17f, d * .12f), size = Size(d * .43f, d * .34f)
-        )
-        drawOval(Color.White.copy(alpha = .28f), Offset(d * .24f, d * .17f), Size(d * .24f, d * .09f))
-        val eyeY = d * .49f
-        val leftX = d * .37f
-        val rightX = d * .63f
-        when (profile.petEyes) {
-            1 -> {
-                drawCircle(eyeInk, d * .055f, Offset(leftX, eyeY))
-                drawCircle(eyeInk, d * .055f, Offset(rightX, eyeY))
-                drawCircle(Color.White, d * .016f, Offset(leftX - d * .014f, eyeY - d * .018f))
-                drawCircle(Color.White, d * .016f, Offset(rightX - d * .014f, eyeY - d * .018f))
-            }
-            2 -> {
-                listOf(leftX, rightX).forEach { x ->
-                    val arc = Path().apply {
-                        moveTo(x - d * .062f, eyeY)
-                        quadraticTo(x, eyeY - d * .092f, x + d * .062f, eyeY)
-                    }
-                    drawPath(arc, eyeInk, style = Stroke(width = d * .035f))
-                }
-            }
-            else -> {
-                listOf(leftX, rightX).forEach { x ->
-                    drawOval(eyeInk, Offset(x - d * .057f, eyeY - d * .095f * blink), Size(d * .114f, d * .19f * blink))
-                }
-            }
-        }
-        when (profile.petHat) {
-            1 -> { // beanie
-                val hat = Path().apply {
-                    moveTo(d * .25f, d * .20f)
-                    quadraticTo(d * .50f, -d * .08f, d * .75f, d * .20f)
-                    lineTo(d * .75f, d * .27f)
-                    lineTo(d * .25f, d * .27f)
-                    close()
-                }
-                drawPath(hat, Color(0xFF8E756B))
-                drawPath(hat, ink, style = Stroke(width = d * .025f))
-                drawLine(Color(0xFFF9E9D9), Offset(d * .25f, d * .24f), Offset(d * .75f, d * .24f), d * .05f)
-                drawCircle(Color(0xFF8E756B), d * .055f, Offset(d * .5f, d * .055f))
-            }
-            2 -> { // party hat
-                val hat = Path().apply { moveTo(d * .50f, d * .015f); lineTo(d * .69f, d * .23f); lineTo(d * .30f, d * .23f); close() }
-                drawPath(hat, Color(0xFFDE806C))
-                drawPath(hat, ink, style = Stroke(width = d * .025f))
-                drawCircle(Color(0xFFFFEAB6), d * .045f, Offset(d * .5f, d * .01f))
-                drawCircle(Color.White, d * .025f, Offset(d * .48f, d * .13f))
-            }
-            3 -> { // tiny crown
-                val crown = Path().apply {
-                    moveTo(d * .29f, d * .23f); lineTo(d * .30f, d * .06f); lineTo(d * .41f, d * .14f)
-                    lineTo(d * .50f, d * .025f); lineTo(d * .59f, d * .14f); lineTo(d * .70f, d * .06f)
-                    lineTo(d * .71f, d * .23f); close()
-                }
-                drawPath(crown, Color(0xFFF2C65D))
-                drawPath(crown, ink, style = Stroke(width = d * .025f))
-            }
-        }
-    }
-}
 
 @Composable
 fun YouScreen(profile: YouProfile, onSave: (YouProfile) -> Unit) {
@@ -175,6 +69,10 @@ fun YouScreen(profile: YouProfile, onSave: (YouProfile) -> Unit) {
 @Composable
 fun CompanionSettings(profile: YouProfile, onSave: (YouProfile) -> Unit) {
     var draft by remember(profile) { mutableStateOf(profile) }
+    var showColourPicker by remember { mutableStateOf(false) }
+    if (showColourPicker) CompanionColorPicker(draft,
+        onDismiss = { showColourPicker = false },
+        onApply = { draft = draft.copy(petCustomColor = it); showColourPicker = false })
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Cina & companion", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = dark)
         Text("Choose how Cina responds and give your little companion a look of its own.", color = quiet, fontSize = 13.sp)
@@ -192,31 +90,64 @@ fun CompanionSettings(profile: YouProfile, onSave: (YouProfile) -> Unit) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             petColors.forEachIndexed { index, color ->
                 Box(Modifier.size(38.dp).clip(CircleShape).background(color)
-                    .border(if(draft.petColor == index) 3.dp else 1.dp, if(draft.petColor == index) dark else border, CircleShape)
-                    .clickable(onClickLabel = "Choose colour ${index + 1}") { draft = draft.copy(petColor = index) })
+                    .border(if(draft.petCustomColor.isEmpty() && draft.petColor == index) 3.dp else 1.dp, if(draft.petCustomColor.isEmpty() && draft.petColor == index) dark else border, CircleShape)
+                    .semantics { contentDescription = "Colour ${index + 1}" }
+                    .selectable(selected = draft.petCustomColor.isEmpty() && draft.petColor == index,
+                        role = Role.RadioButton) { draft = draft.copy(petColor = index, petCustomColor = "") })
             }
         }
-        Text("Eyes", color = dark, fontWeight = FontWeight.Medium)
-        ChoiceRow(listOf("Classic", "Sparkle", "Happy"), draft.petEyes) { draft = draft.copy(petEyes = it) }
-        Text("Hat", color = dark, fontWeight = FontWeight.Medium)
-        ChoiceRow(listOf("None", "Beanie", "Party", "Crown"), draft.petHat) { draft = draft.copy(petHat = it) }
+        OutlinedButton(onClick = { showColourPicker = true }, modifier = Modifier.fillMaxWidth()) {
+            Box(Modifier.size(20.dp).background(companionColor(draft), CircleShape).border(1.dp, border, CircleShape))
+            Spacer(Modifier.width(10.dp))
+            Text(if (draft.petCustomColor.isEmpty()) "Create a custom colour" else "Custom colour · #${draft.petCustomColor}")
+        }
+        AppearanceHeading("Eyes", draft)
+        ChoiceRow(listOf("Classic", "Sparkle", "Happy", "Sleepy", "Wink", "Hearts"), draft.petEyes) { draft = draft.copy(petEyes = it) }
+        AppearanceHeading("Hat", draft)
+        ChoiceRow(listOf("None", "Beanie", "Party", "Crown", "Beret", "Sprout", "Bow"), draft.petHat) { draft = draft.copy(petHat = it) }
+
+        AppearanceHeading("Mouth", draft)
+        ChoiceRow(listOf("Smile", "Grin", "Surprised", "Calm"), draft.petMouth) { draft = draft.copy(petMouth = it) }
+        AppearanceHeading("Accessories", draft)
+        ChoiceRow(listOf("None", "Glasses", "Freckles"), draft.petAccessory) { draft = draft.copy(petAccessory = it) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Rosy cheeks", Modifier.weight(1f), color = dark)
+            Switch(draft.petBlush, { draft = draft.copy(petBlush = it) },
+                modifier = Modifier.semantics { contentDescription = "Rosy cheeks" })
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Show companion in the app", Modifier.weight(1f), color = dark)
             Switch(draft.showPet, { draft = draft.copy(showPet = it) })
         }
+        TextButton(onClick = { draft = draft.copy(petColor = 0, petCustomColor = "", petEyes = 0,
+            petHat = 0, petMouth = 0, petAccessory = 0, petBlush = true) }) { Text("Reset appearance") }
         Button(onClick = { onSave(draft) }, enabled = draft != profile, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("Save customization") }
     }
 }
 
 @Composable
+private fun AppearanceHeading(label: String, profile: YouProfile) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), color = dark, fontWeight = FontWeight.Medium)
+        CompanionBubble(profile, 56.dp)
+    }
+}
+
+@Composable
 private fun ChoiceRow(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        labels.forEachIndexed { index, label ->
-            Surface(shape = RoundedCornerShape(14.dp), color = if(index == selected) dark else wash,
-                modifier = Modifier.weight(1f).clickable { onSelect(index) }) {
-                Box(Modifier.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                    Text(label, color = if(index == selected) Color.White else dark, fontSize = 12.sp)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        labels.indices.chunked(3).forEach { indices ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                indices.forEach { index ->
+                    Surface(shape = RoundedCornerShape(14.dp), color = if(index == selected) dark else wash,
+                        modifier = Modifier.weight(1f).selectable(selected = index == selected,
+                            role = Role.RadioButton, onClick = { onSelect(index) })) {
+                        Box(Modifier.heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
+                            Text(labels[index], color = if(index == selected) Color.White else dark, fontSize = 12.sp)
+                        }
+                    }
                 }
+                repeat(3 - indices.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }

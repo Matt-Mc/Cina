@@ -1,0 +1,9 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/quick_note" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/widget_background" android:gravity="center_vertical"
+    android:orientation="horizontal" android:padding="16dp">
+    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+        android:text="＋  Quick note" android:textColor="#26312C" android:textSize="17sp" />
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="cina" android:textColor="#4F7562" android:textSize="14sp" />
+</LinearLayout>

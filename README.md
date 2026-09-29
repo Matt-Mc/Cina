@@ -1,6 +1,29 @@
-# Cina
+<div align="center">
+  <img src="preview/cina-logo.svg" alt="Cina app logo" width="112" height="112">
+  <h1>Cina</h1>
+  <p><strong>A little space to think, right on your phone.</strong></p>
+</div>
 
-Cina is a text-first Android assistant that runs GGUF language models on the phone. It uses the official llama.cpp Android binding, local SQLite storage, and Kotlin/Jetpack Compose. Inference, conversations, notes, reminders, and saved memory do not use a server.
+Cina is a text-first Android assistant that runs GGUF language models on your phone. It uses the official llama.cpp Android binding, local SQLite storage, and Kotlin/Jetpack Compose. Inference, conversations, notes, reminders, and saved memory stay on the device. Internet search and connected tools are optional and use the network when you enable them.
+
+## A look inside
+
+| Chat | Make Cina yours | Custom colours |
+| :---: | :---: | :---: |
+| <a href="preview/cina-avatar-review.png"><img src="preview/cina-avatar-review.png" alt="Cina's chat home screen with the companion avatar" width="230"></a> | <a href="preview/cina-avatar-settings.png"><img src="preview/cina-avatar-settings.png" alt="Companion customization in Settings" width="230"></a> | <a href="preview/cina-colour-picker.png"><img src="preview/cina-colour-picker.png" alt="Custom companion colour picker" width="230"></a> |
+
+Tap a screenshot to see it full size. These captures show the app running on an Android emulator.
+
+## What Cina can do
+
+- **Chat privately with local models.** Download recommended GGUF models, browse Hugging Face, import a file, or add a direct model URL. Once a model is installed, ordinary chat works offline. Benchmark an installed model to compare speed and a few short task checks on your phone.
+- **Keep useful things close.** Save and search notes, set reminders, and review suggested memories before they become part of future conversations. An optional You profile lets you share the details Cina should remember about you.
+- **Work with your files.** Attach a text document or a PDF to a chat. Cina indexes selectable text on the device and can cite the relevant file and passage in its answer.
+- **Turn requests into goals.** Start a goal from chat, follow its plan and tool results in Tasks, and return to paused or waiting work. Goals keep their progress across app restarts.
+- **Schedule local prompts.** Run a prompt once, daily, or weekly with a chosen on-device model. Cina saves the result and sends a notification when Android allows it.
+- **Use helpful tools when you choose.** Search the web, create notes and reminders, or connect an HTTPS MCP service. Cina asks before actions that create or share data, unless you enable YOLO mode for that chat.
+- **Reach Cina from the home screen.** Quick Note, Ask Cina, and Today widgets help you capture a thought, start a chat, or glance at upcoming reminders and the latest scheduled result.
+- **Personalize the companion.** Choose its name, colours, eyes, hat, mouth, and accessories, including a custom colour, and set how Cina should respond.
 
 ## Build
 
@@ -31,6 +54,17 @@ On Windows, you can encode the keystore with `[Convert]::ToBase64String([IO.File
 4. Notes, reminders, and scheduled tasks are stored inside Cina. In **Scheduled tasks**, choose a prompt, model, time, and optional daily or weekly repeat. Cina runs the prompt on the phone, can use its local note, reminder, and task tools, and notifies you of the saved result. Calendar, alarm, and share actions open Android system apps for the final user step.
 5. To use remote tools, open **Settings → Connected tools**. For Linear, choose **Sign in with Linear** and approve access in your browser. Other services currently use an access token. Cina checks the connection and loads the server's tool list. Disconnecting deletes saved credentials.
 
+## Home-screen widgets
+
+Long-press the Android home screen, open **Widgets**, and find **Cina**. **Quick Note** opens a focused editor and saves the text directly to Notes; its first line becomes the title. **Ask Cina** opens a prompt field and sends the text in a new chat when you press Send. If no model is selected, the prompt stays in the new chat's input field so you can choose a model first. **Today** shows the next two open reminders and the latest scheduled task result. Tap the reminder area to open Notes & reminders, or the task result to open Scheduled tasks.
+
+## Goals, files, memory, and model benchmarks
+
+- Type a request in chat and choose **Start as goal** to track it in **Tasks**. Cina saves tool results and approval checkpoints with the goal. You can return to a paused or waiting goal, follow up, or mark it complete. Goal execution runs while the chat is active; closing the app preserves progress but does not keep that goal running in the background. Scheduled tasks remain a separate feature.
+- Tap **+** beside the chat input to add a text document or a PDF. Cina extracts and indexes selectable text locally, searches relevant passages when you ask about the file, and identifies the file and passage in its response. Supported text files include TXT, Markdown, CSV, JSON, XML, HTML, and logs. Files are limited to 8 MB; extracted text is limited to 250,000 characters. Scanned PDFs and images need OCR and are not supported yet. The searchable text is stored with the chat on this phone.
+- **Memory** now shows proposed personal facts for review before saving them. Suggestions and saved facts show their source conversation. Cina also maintains a short rolling summary of older conversation turns for continuity.
+- In **Models**, choose **Benchmark** on an installed model to measure generation speed on this phone and run three short Cina task checks. The recommendation is based only on these checks and speed; test real requests before relying on a model for important work.
+
 ## Remote MCP tools
 
 Cina includes ten hosted MCP presets: Gmail, Google Drive, Google Docs, Google Sheets, Google Slides, Google Calendar, Google Chat, Google Contacts (People API), GitHub, and Linear. You can also add an arbitrary HTTPS Streamable HTTP MCP endpoint in Settings with a name, URL, and optional bearer token. For a Claude or Codex configuration that contains a remote `url`, use that URL. A `command`/`args` configuration describes a local `stdio` server and cannot run inside Cina on Android; host that server behind an HTTPS MCP endpoint first. Cina stores custom connections on the device and removes their credentials when disconnected or removed. Linear supports browser based OAuth sign-in with automatic token renewal, as well as manual API keys or OAuth tokens. Google Workspace MCP requires a configured Google Cloud project and OAuth authorization; a pasted Google access token expires, so renew it in Settings when needed. GitHub accepts a personal access token. Presets are connection options, not accounts connected by default.
@@ -46,4 +80,5 @@ The assistant requests confirmation before creating or sharing data, including s
 - Scheduled tasks run locally through Android's persistent work scheduler, so the actual start time can be later than requested. Each run can make up to three local tool calls and produces a text response; connected-tool and Android screen actions are unavailable in the background. The selected model must remain on the phone. Long model runs can be interrupted by Android and may need another attempt.
 - Web search sends its query to DuckDuckGo. If that search fails and a Brave key is saved, Cina retries with Brave. Search results are treated as untrusted input to the local model.
 - No cloud inference, voice, accessibility automation, or background autonomous agent. Connected MCP services do exchange data with their providers when used.
+- Goals survive app restarts, but only scheduled tasks execute while the chat is closed. Attached files are currently indexed by extracted text; scanned pages, images, and other binary formats are not interpreted.
 - Device performance and memory use vary by model. The app gives an estimate before download; test on target phones before distribution.
