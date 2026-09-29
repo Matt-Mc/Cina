@@ -52,17 +52,27 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                 val model = store.models().firstOrNull { it.path == task.modelPath }
                     ?: error("The selected model is no longer on this phone.")
                 ModelAccess.mutex.withLock {
-                    val runtime = AssistantRuntime(applicationContext, store) {
-                        "This is an automatic scheduled task. No tools are available. Reply with a final text answer only. Do not request an action or claim to have sent messages or changed other apps."
-                    }
+                    val tools = AssistantTools(applicationContext, store, scheduledModelPath = task.modelPath)
+                    val runtime = AssistantRuntime(applicationContext, store) { tools.specification }
+                    val chat = Chat(0, task.title, false, false)
                     try {
                         withTimeout(8 * 60 * 1000L) {
-                            runtime.use(model, Chat(0, task.title, false, false),
+                            runtime.use(model, chat,
                                 applicationContext.getSharedPreferences("settings", 0).getBoolean("memory", true),
                                 YouProfileStore(applicationContext).read())
-                            splitModelResponse(runtime.generate(task.prompt) {}).answer
-                                .takeIf { it.isNotBlank() && !it.startsWith("[tool]") }
-                                ?: error("The model did not produce a text answer.")
+                            var answer = splitModelResponse(runtime.generate(task.prompt) {}).answer
+                            repeat(3) {
+                                val request = tools.parse(answer) ?: return@withTimeout answer.takeIf { it.isNotBlank() }
+                                    ?: error("The model did not produce a text answer.")
+                                val result = try { tools.execute(chat, request) }
+                                    catch (e: CancellationException) { throw e }
+                                    catch (e: Exception) { "Tool error: ${e.message}" }
+                                answer = splitModelResponse(runtime.generate(
+                                    "Tool result for ${request.name}: $result. Continue the scheduled task. You may call another available tool if needed; otherwise give a final text answer."
+                                ) {}).answer
+                            }
+                            require(tools.parse(answer) == null) { "The scheduled task reached its tool limit." }
+                            answer.takeIf { it.isNotBlank() } ?: error("The model did not produce a text answer.")
                         }
                     } finally { runtime.release() }
                 }

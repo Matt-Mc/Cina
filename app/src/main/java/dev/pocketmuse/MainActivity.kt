@@ -446,7 +446,7 @@ private fun ScheduledTasksScreen(vm: AssistantViewModel) {
     var repeatMenu by remember { mutableStateOf(false) }
     var viewed by remember { mutableStateOf<ScheduledTask?>(null) }
     LaunchedEffect(Unit) { while (true) { delay(5_000); vm.refresh() } }
-    Page("Scheduled tasks", "Cina runs a saved prompt on this phone and notifies you when the result is ready. Runs may start later than requested.") {
+    Page("Scheduled tasks", "Cina runs a saved prompt on this phone. It can create notes, reminders, and tasks while running, then notifies you of the result. Runs may start later than requested.") {
         SectionTitle("New task")
         OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         OutlinedTextField(prompt, { prompt = it }, label = { Text("What should Cina do?") },
@@ -555,9 +555,9 @@ private fun SettingsScreen(vm: AssistantViewModel, updateStatus: String, onCheck
         Button(onClick = { vm.setKey("hf", hf); hf = "" }, enabled = hf.isNotBlank()) { Text("Save token") }
         HorizontalDivider(color = Line); Spacer(Modifier.height(4.dp))
         SectionTitle("Optional web search")
-        Text("When enabled in a chat, only the search query goes to Brave.", color = Muted, fontSize = 13.sp)
+        Text("When enabled in a chat, Cina searches DuckDuckGo without a key. If it is unavailable, a saved Brave key lets Cina retry there. Search queries go to the provider used.", color = Muted, fontSize = 13.sp)
         OutlinedTextField(brave, { brave = it }, label = { Text("Brave Search API key") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-        Button(onClick = { vm.setKey("brave", brave); brave = "" }, enabled = brave.isNotBlank()) { Text("Save key") }
+        Button(onClick = { vm.setKey("brave", brave); brave = "" }, enabled = brave.isNotBlank()) { Text("Save fallback key") }
         Text("Keys are encrypted and stored on this device.", color = Muted, fontSize = 12.sp)
         HorizontalDivider(color = Line); Spacer(Modifier.height(4.dp))
         SectionTitle("Connected tools")
