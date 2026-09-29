@@ -2,6 +2,7 @@ package dev.pocketmuse
 
 import android.app.Activity
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class AssistantViewModel(application: Application) : AndroidViewModel(application) {
@@ -39,6 +41,8 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val notes = _notes.asStateFlow()
     private val _reminders = MutableStateFlow(store.reminders())
     val reminders = _reminders.asStateFlow()
+    private val _scheduledTasks = MutableStateFlow(store.scheduledTasks())
+    val scheduledTasks = _scheduledTasks.asStateFlow()
     private val _memories = MutableStateFlow(store.memories())
     val memories = _memories.asStateFlow()
     private val _logs = MutableStateFlow(store.actionLog(_active.value))
@@ -69,21 +73,53 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val youProfile = _youProfile.asStateFlow()
 
     fun attach(activity: Activity) {
-        tools = AssistantTools(activity, store, secrets, mcp); runtime = AssistantRuntime(activity, store, tools!!)
+        tools = AssistantTools(activity, store, secrets, mcp); runtime = AssistantRuntime(activity, store) { tools!!.specification }
         viewModelScope.launch(Dispatchers.IO) { mcp.refreshEnabled(); _connections.value = mcp.snapshot(); runtime?.invalidate() }
     }
     fun connectMcp(id: String, token: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val count = mcp.connect(id, token)
+                if (id == "linear") mcp.useManualLinearToken()
                 _status.value = "Connected ${mcp.snapshot().first { it.preset.id == id }.preset.title}: $count tools available."
                 runtime?.invalidate()
             } catch (e: Exception) { _status.value = e.message ?: "Connection failed." }
             finally { _connections.value = mcp.snapshot() }
         }
     }
+    fun addMcpServer(name: String, url: String, token: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val count = mcp.addCustom(name, url, token)
+                _status.value = "Connected ${name.trim()}: $count tools available."
+                runtime?.invalidate()
+            } catch (e: Exception) { _status.value = e.message ?: "Connection failed." }
+            finally { _connections.value = mcp.snapshot() }
+        }
+    }
+    fun removeMcpServer(id: String) {
+        mcp.removeCustom(id); _connections.value = mcp.snapshot(); runtime?.invalidate()
+    }
+    fun startLinearSignIn(activity: Activity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = mcp.beginLinearOAuth()
+                withContext(Dispatchers.Main) { activity.startActivity(Intent(Intent.ACTION_VIEW, url)) }
+            } catch (e: Exception) { _status.value = e.message ?: "Could not start Linear sign-in." }
+        }
+    }
+    fun finishLinearSignIn(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val count = mcp.completeLinearOAuth(uri)
+                _status.value = "Connected Linear: $count tools available."
+                runtime?.invalidate()
+            } catch (e: Exception) { _status.value = e.message ?: "Linear sign-in failed." }
+            finally { _connections.value = mcp.snapshot() }
+        }
+    }
     fun disconnectMcp(id: String) { mcp.disconnect(id); _connections.value = mcp.snapshot(); runtime?.invalidate() }
-    fun refresh() { _chats.value = store.chats(); _messages.value = store.messages(_active.value); _models.value = store.models(); _notes.value = store.notes(); _reminders.value = store.reminders(); _memories.value = store.memories(); _logs.value = store.actionLog(_active.value) }
+    fun refresh() { _chats.value = store.chats(); _messages.value = store.messages(_active.value); _models.value = store.models(); _notes.value = store.notes(); _reminders.value = store.reminders(); _scheduledTasks.value = store.scheduledTasks(); _memories.value = store.memories(); _logs.value = store.actionLog(_active.value) }
     fun newChat() { stop(); store.endChat(_active.value); _active.value = store.newChat(); refresh() }
     fun openChat(id: Long) { stop(); store.endChat(_active.value); _active.value = id; refresh() }
     fun setFlag(flag: String, enabled: Boolean) { store.setChatFlag(_active.value, flag, enabled); refresh() }
@@ -107,6 +143,28 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun addNote(title: String, body: String) { if(title.isNotBlank() && body.isNotBlank()) { store.addNote(title.trim(), body.trim()); refresh() } }
     fun deleteNote(id: Long) { store.deleteNote(id); refresh() }
     fun completeReminder(id: Long) { store.completeReminder(id); refresh() }
+    fun addScheduledTask(title: String, prompt: String, whenMillis: Long, repeat: String) {
+        val model = _selectedModel.value ?: run { _status.value = "Choose a model before scheduling a task."; return }
+        if (title.isBlank() || prompt.isBlank() || whenMillis <= System.currentTimeMillis() || repeat !in listOf("once", "daily", "weekly")) {
+            _status.value = "Add a title, prompt, and future time."; return
+        }
+        val id = store.addScheduledTask(title.trim().take(100), prompt.trim().take(2000), model, whenMillis, repeat)
+        store.scheduledTask(id)?.let { ScheduledTaskScheduler.schedule(getApplication(), it) }
+        refresh(); _status.value = "Scheduled task saved. Android may start it a little late."
+    }
+    fun setScheduledTaskEnabled(task: ScheduledTask, enabled: Boolean) {
+        if (!enabled) {
+            store.setScheduledTaskEnabled(task.id, false); ScheduledTaskScheduler.cancel(getApplication(), task.id)
+        } else {
+            val next = if (task.nextRunMillis > System.currentTimeMillis()) task.nextRunMillis
+                else ScheduledTaskScheduler.nextRun(task.nextRunMillis, task.repeat)
+            if (next == null) { _status.value = "This one-time task has passed. Create a new task to run it again."; return }
+            store.setScheduledTaskEnabled(task.id, true, next)
+            store.scheduledTask(task.id)?.let { ScheduledTaskScheduler.schedule(getApplication(), it) }
+        }
+        refresh()
+    }
+    fun deleteScheduledTask(id: Long) { ScheduledTaskScheduler.cancel(getApplication(), id); store.deleteScheduledTask(id); refresh() }
     fun editMemory(id: Long, fact: String) { if(fact.isNotBlank()) { store.updateMemory(id, fact.trim()); runtime?.invalidate(); refresh() } }
     fun deleteMemory(id: Long) { store.deleteMemory(id); runtime?.invalidate(); refresh() }
     fun removeModel(model: LocalModel) { if(_selectedModel.value == model.path) { _status.value = "Select another model before deleting this one."; return }; library.remove(model); refresh() }
@@ -123,14 +181,16 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         task = viewModelScope.launch {
             _busy.value = true; _live.value = ""
             try {
+                ModelAccess.mutex.withLock {
                 assistant.use(model, chat, _memoryEnabled.value, _youProfile.value)
                 val output = assistant.generate(text.trim()) { _live.value = it }
-                val request = try { dispatcher.parse(output) } catch (_: Exception) { finishAnswer(chat.id, "I couldn't understand the requested action. Please try rephrasing it."); return@launch }
+                val request = try { dispatcher.parse(splitModelResponse(output).answer) } catch (_: Exception) { finishAnswer(chat.id, "I couldn't understand the requested action. Please try rephrasing it."); return@launch }
                 if(request == null) finishAnswer(chat.id, output)
                 else if(dispatcher.needsConfirmation(request) && !chat.yolo) {
                     _pending.value = PendingAction(request, text.trim()); _live.value = ""
         } else runTool(chat, request, assistant, dispatcher, text.trim())
                 if(_memoryEnabled.value && _pending.value == null) { try { assistant.extractMemory(text.trim()); refresh() } catch (_: Exception) { } finally { assistant.invalidate() } }
+                }
             } catch (_: CancellationException) { _status.value = "Stopped." }
             catch(e: Exception) { _status.value = e.message ?: "The model could not respond." }
             finally { _busy.value = false; _live.value = "" }
@@ -145,7 +205,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         _pending.value = null
         task = viewModelScope.launch {
             _busy.value = true
-            try { runTool(chat, pendingAction.request, assistant, dispatcher, pendingAction.originalUserText, pendingAction.depth); if(_memoryEnabled.value && _pending.value == null) { try { assistant.extractMemory(pendingAction.originalUserText); refresh() } finally { assistant.invalidate() } } }
+            try { ModelAccess.mutex.withLock { runTool(chat, pendingAction.request, assistant, dispatcher, pendingAction.originalUserText, pendingAction.depth); if(_memoryEnabled.value && _pending.value == null) { try { assistant.extractMemory(pendingAction.originalUserText); refresh() } finally { assistant.invalidate() } } } }
             catch(e: Exception) { _status.value = e.message ?: "Action failed." }
             finally { _busy.value = false; _live.value = "" }
         }
@@ -155,7 +215,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         val result = try { dispatcher.execute(chat, request) } catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
         refresh()
         val response = assistant.generate("Tool result for ${request.name}: $result. Continue the user's request. You may call another tool if needed; otherwise explain the outcome. If web sources appear, include their URLs.") { _live.value = it }
-        val next = try { dispatcher.parse(response) } catch (_: Exception) { null }
+        val next = try { dispatcher.parse(splitModelResponse(response).answer) } catch (_: Exception) { null }
         if (next == null) finishAnswer(chat.id, response)
         else if (depth >= 2) finishAnswer(chat.id, "I reached the action limit for this request. Last result: ${result.take(1000)}")
         else if (dispatcher.needsConfirmation(next) && !chat.yolo) { _pending.value = PendingAction(next, originalUserText, depth + 1); _live.value = "" }
