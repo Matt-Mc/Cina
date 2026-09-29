@@ -27,8 +27,8 @@ On Windows, you can encode the keystore with `[Convert]::ToBase64String([IO.File
 
 1. Open **Models** and download a recommended model, search a Hugging Face GGUF repository, paste a direct HTTPS GGUF URL, or import a local GGUF file.
 2. Select an installed model. Chat works without network access after the model is installed.
-3. In a chat, enable **Web** only if you want internet search. Set your own Brave Search API key in **Settings**. Gated Hugging Face files require account approval and a token entered in Settings.
-4. Notes, reminders, and scheduled tasks are stored inside Cina. In **Scheduled tasks**, choose a prompt, model, time, and optional daily or weekly repeat. Cina runs the prompt on the phone and notifies you of the saved result. Calendar, alarm, and share actions open Android system apps for the final user step.
+3. In a chat, enable **Web** only if you want internet search. Cina searches DuckDuckGo without an API key. You can add a Brave Search API key in **Settings** as a fallback. Gated Hugging Face files require account approval and a token entered in Settings.
+4. Notes, reminders, and scheduled tasks are stored inside Cina. In **Scheduled tasks**, choose a prompt, model, time, and optional daily or weekly repeat. Cina runs the prompt on the phone, can use its local note, reminder, and task tools, and notifies you of the saved result. Calendar, alarm, and share actions open Android system apps for the final user step.
 5. To use remote tools, open **Settings → Connected tools**. For Linear, choose **Sign in with Linear** and approve access in your browser. Other services currently use an access token. Cina checks the connection and loads the server's tool list. Disconnecting deletes saved credentials.
 
 ## Remote MCP tools
@@ -43,7 +43,7 @@ The assistant requests confirmation before creating or sharing data, including s
 
 - GGUF text chat models only. Import validation checks GGUF structure; llama.cpp decides whether an architecture can run on this device.
 - Reminder notifications are inexact and depend on Android notification permission and battery policy.
-- Scheduled tasks run locally through Android's persistent work scheduler, so the actual start time can be later than requested. Each run produces a text response and does not perform connected-tool actions in the background. The selected model must remain on the phone. Long model runs can be interrupted by Android and may need another attempt.
-- Web search sends its query to Brave. Search results are treated as untrusted input to the local model.
+- Scheduled tasks run locally through Android's persistent work scheduler, so the actual start time can be later than requested. Each run can make up to three local tool calls and produces a text response; connected-tool and Android screen actions are unavailable in the background. The selected model must remain on the phone. Long model runs can be interrupted by Android and may need another attempt.
+- Web search sends its query to DuckDuckGo. If that search fails and a Brave key is saved, Cina retries with Brave. Search results are treated as untrusted input to the local model.
 - No cloud inference, voice, accessibility automation, or background autonomous agent. Connected MCP services do exchange data with their providers when used.
 - Device performance and memory use vary by model. The app gives an estimate before download; test on target phones before distribution.
