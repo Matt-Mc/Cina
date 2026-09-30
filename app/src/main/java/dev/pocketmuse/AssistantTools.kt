@@ -52,6 +52,18 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         val obj = JSONObject(match.groupValues[1])
         return ToolRequest(obj.getString("name"), obj.getJSONObject("arguments"))
     }
+    fun callKey(request: ToolRequest): String {
+        fun canonical(value: Any?): String = when (value) {
+            is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") {
+                JSONObject.quote(it) + ":" + canonical(value.get(it))
+            }
+            is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { canonical(value.get(it)) }
+            is String -> JSONObject.quote(value)
+            else -> value.toString()
+        }
+        return request.name + ":" + canonical(request.arguments)
+    }
+
     fun needsConfirmation(request: ToolRequest) = request.name !in setOf("search_notes", "search_reminders", "search_attachments", "list_scheduled_tasks", "web_search", "mcp_find")
     fun describe(request: ToolRequest): String = "${request.name}: ${request.arguments}"
 

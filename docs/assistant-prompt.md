@@ -39,3 +39,28 @@ Record actual answers and tool calls; do not score only the final text.
 Run `bash ./gradlew :app:testDebugUnitTest` and build the APK in an Android build
 environment. On-device inference evaluation is required to confirm whether these
 instructions improve a particular small model.
+
+## Repeated tool calls
+
+Each interactive turn allows at most three calls, or eight for an active goal.
+The budget and attempted call keys survive approval pauses. Equivalent argument
+objects share a key even if their JSON property order differs. Repeated writes
+are blocked anywhere in the turn. Identical consecutive reads are also blocked;
+a read may run again after an intervening change.
+
+At the budget, on a repeated call, or on malformed follow-up syntax, Cina clears
+the live preview and makes one text-only recovery attempt in a fresh model
+conversation. It supplies the original request and the attempted results without
+the tool catalog. This can reload the model and take extra time. Recovery is
+limited to 60 seconds. No tool output from recovery is executed. Scheduled tasks
+stop repeated calls as a task error rather than taking duplicate actions.
+
+Device regressions to check:
+
+- Ask to plan a week with Web on. Expect a question or a draft, without a saved note.
+- Force repeated create_note calls in a test session. Expect one execution for the
+  same arguments, including across approval pauses, followed by text recovery.
+- Run three distinct requested actions. Expect no fourth execution.
+- Confirm tool prefixes never remain visible after the completed answer, even
+  while memory extraction is running.
+- Stop during recovery. Expect cancellation and a clean next turn.
