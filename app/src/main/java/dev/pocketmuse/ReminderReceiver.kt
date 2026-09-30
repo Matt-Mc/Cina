@@ -42,7 +42,7 @@ class ReminderReceiver : BroadcastReceiver() {
                     (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)) return
                 if (!store.claimReminderNotification(id)) return
                 val open = PendingIntent.getActivity(context, id.toInt(),
-                    Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_WIDGET_PAGE, "Notes")
+                    Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_WIDGET_PAGE, "Reminders")
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                 val notification = android.app.Notification.Builder(context, CHANNEL_ID)

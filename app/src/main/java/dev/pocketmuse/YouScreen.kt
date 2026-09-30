@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,40 +30,45 @@ private val wash = Color(0xFFF0F2EC)
 private val border = Color(0xFFE7E9E2)
 
 @Composable
-fun YouScreen(profile: YouProfile, onSave: (YouProfile) -> Unit) {
-    var draft by remember(profile) { mutableStateOf(profile) }
-    val dirty = draft != profile
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-        .padding(horizontal = 22.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        Text("You", fontFamily = FontFamily.Serif, fontSize = 37.sp, color = dark)
-        Text("The details you want Cina to know about you.", color = quiet, fontSize = 14.sp)
-        Column(Modifier.fillMaxWidth().background(Color(0xFFF4F2EC), RoundedCornerShape(28.dp))
-            .padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(88.dp).background(Color(0xFFD8E5D9), CircleShape), contentAlignment = Alignment.Center) {
-                Text(draft.name.trim().take(1).uppercase().ifBlank { "Y" }, fontFamily = FontFamily.Serif, fontSize = 42.sp, color = dark)
+internal fun YouScreen(vm: AssistantViewModel, onEditProfile: () -> Unit, onOpenChat: () -> Unit) {
+    val profile by vm.youProfile.collectAsState()
+    val suggestions by vm.memorySuggestions.collectAsState()
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var preferences by rememberSaveable(profile.preferences) { mutableStateOf(profile.preferences) }
+    Page("You", "The details you choose to share with Cina.") {
+        ScreenTabs(listOf("About you", "Memory"), tab) { tab = it }
+        if (tab == 0) {
+            Column(Modifier.fillMaxWidth().background(wash, RoundedCornerShape(20.dp)).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(profile.name.ifBlank { "Your profile" }, color = dark, fontFamily = FontFamily.Serif, fontSize = 25.sp)
+                        if (profile.pronouns.isNotBlank()) Text(profile.pronouns, color = quiet, fontSize = 12.sp)
+                    }
+                    TextButton(onClick = onEditProfile) { Text("Edit") }
+                }
+                Text(profile.about.ifBlank { "Add a name, interests, or anything you'd like Cina to know." }, color = quiet, fontSize = 13.sp)
             }
-            Spacer(Modifier.height(12.dp))
-            Text(draft.name.ifBlank { "Your name" }, fontFamily = FontFamily.Serif, fontSize = 27.sp, color = dark)
-            if (draft.pronouns.isNotBlank()) Text(draft.pronouns, color = quiet, fontSize = 13.sp)
-            if (draft.about.isNotBlank()) {
-                Spacer(Modifier.height(12.dp))
-                Text(draft.about, color = dark, fontSize = 14.sp)
-            }
-            Spacer(Modifier.height(14.dp))
-            Text("PRIVATE PROFILE · ON THIS DEVICE", color = quiet, fontSize = 10.sp, letterSpacing = 1.2.sp)
-        }
+            SectionTitle("How Cina should help")
+            OutlinedTextField(preferences, { preferences = it.take(500) }, label = { Text("Response preferences") },
+                placeholder = { Text("Short answers, gentle reminders, favourite topics…") }, minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth())
+            if (preferences != profile.preferences) Button(onClick = { vm.saveYouProfile(profile.copy(preferences = preferences)) }) { Text("Save preferences") }
+            NavigationRow("Memory", if (suggestions.isEmpty()) "Review what Cina remembers" else "${suggestions.size} suggested ${if (suggestions.size == 1) "memory" else "memories"} to review") { tab = 1 }
+            Text("Profile details and approved memories help personalize future chats. They are stored on this phone.", color = quiet, fontSize = 12.sp)
+        } else MemoryContent(vm, onOpenChat)
+    }
+}
 
-        Text("Edit profile", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = dark)
-        OutlinedTextField(draft.name, { draft = draft.copy(name = it.take(80)) }, label = { Text("Display name") },
-            placeholder = { Text("What should Cina call you?") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(draft.pronouns, { draft = draft.copy(pronouns = it.take(60)) }, label = { Text("Pronouns") },
-            singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(draft.about, { draft = draft.copy(about = it.take(500)) }, label = { Text("Bio") },
-            placeholder = { Text("Your interests, goals, or anything you'd like to share…") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-        Text("Only you and Cina can see this profile. Cina uses it to make future chats more personal.", color = quiet, fontSize = 12.sp)
-
-        Button(onClick = { onSave(draft) }, enabled = dirty, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("Save profile") }
-        Spacer(Modifier.height(16.dp))
+@Composable
+internal fun ProfileEditor(profile: YouProfile, onSave: (YouProfile) -> Unit) {
+    var name by rememberSaveable(profile.name) { mutableStateOf(profile.name) }
+    var pronouns by rememberSaveable(profile.pronouns) { mutableStateOf(profile.pronouns) }
+    var about by rememberSaveable(profile.about) { mutableStateOf(profile.about) }
+    Page("Edit profile", "Only share what you want Cina to know.") {
+        OutlinedTextField(name, { name = it.take(80) }, label = { Text("Display name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(pronouns, { pronouns = it.take(60) }, label = { Text("Pronouns") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(about, { about = it.take(500) }, label = { Text("About you") }, minLines = 3, maxLines = 8, modifier = Modifier.fillMaxWidth())
+        Button(onClick = { onSave(profile.copy(name = name, pronouns = pronouns, about = about)) },
+            enabled = name != profile.name || pronouns != profile.pronouns || about != profile.about) { Text("Save profile") }
     }
 }
 
@@ -74,16 +80,12 @@ fun CompanionSettings(profile: YouProfile, onSave: (YouProfile) -> Unit) {
         onDismiss = { showColourPicker = false },
         onApply = { draft = draft.copy(petCustomColor = it); showColourPicker = false })
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Cina & companion", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = dark)
-        Text("Choose how Cina responds and give your little companion a look of its own.", color = quiet, fontSize = 13.sp)
         Column(Modifier.fillMaxWidth().background(Color(0xFFF7F2E9), RoundedCornerShape(24.dp))
             .padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             CompanionBubble(draft, 126.dp)
             Spacer(Modifier.height(6.dp))
             Text(draft.petName.ifBlank { "Your companion" }, fontFamily = FontFamily.Serif, fontSize = 23.sp, color = dark)
         }
-        OutlinedTextField(draft.preferences, { draft = draft.copy(preferences = it.take(500)) }, label = { Text("How Cina should help") },
-            placeholder = { Text("Short answers, gentle reminders, favourite topics…") }, minLines = 2, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(draft.petName, { draft = draft.copy(petName = it.take(40)) }, label = { Text("Companion name") },
             singleLine = true, modifier = Modifier.fillMaxWidth())
         Text("Colour", color = dark, fontWeight = FontWeight.Medium)
@@ -101,14 +103,14 @@ fun CompanionSettings(profile: YouProfile, onSave: (YouProfile) -> Unit) {
             Spacer(Modifier.width(10.dp))
             Text(if (draft.petCustomColor.isEmpty()) "Create a custom colour" else "Custom colour · #${draft.petCustomColor}")
         }
-        AppearanceHeading("Eyes", draft)
+        AppearanceHeading("Eyes")
         ChoiceRow(listOf("Classic", "Sparkle", "Happy", "Sleepy", "Wink", "Hearts"), draft.petEyes) { draft = draft.copy(petEyes = it) }
-        AppearanceHeading("Hat", draft)
+        AppearanceHeading("Hat")
         ChoiceRow(listOf("None", "Beanie", "Party", "Crown", "Beret", "Sprout", "Bow"), draft.petHat) { draft = draft.copy(petHat = it) }
 
-        AppearanceHeading("Mouth", draft)
+        AppearanceHeading("Mouth")
         ChoiceRow(listOf("Smile", "Grin", "Surprised", "Calm"), draft.petMouth) { draft = draft.copy(petMouth = it) }
-        AppearanceHeading("Accessories", draft)
+        AppearanceHeading("Accessories")
         ChoiceRow(listOf("None", "Glasses", "Freckles"), draft.petAccessory) { draft = draft.copy(petAccessory = it) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Rosy cheeks", Modifier.weight(1f), color = dark)
@@ -126,10 +128,9 @@ fun CompanionSettings(profile: YouProfile, onSave: (YouProfile) -> Unit) {
 }
 
 @Composable
-private fun AppearanceHeading(label: String, profile: YouProfile) {
+private fun AppearanceHeading(label: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), color = dark, fontWeight = FontWeight.Medium)
-        CompanionBubble(profile, 56.dp)
     }
 }
 

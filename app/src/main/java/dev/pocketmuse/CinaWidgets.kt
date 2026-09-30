@@ -75,9 +75,9 @@ class TodayWidget : AppWidgetProvider() {
                     latestTask?.let { task ->
                         "Latest task: ${task.title} · ${(task.lastResult ?: task.lastError ?: "Finished").replace('\n', ' ').take(85)}"
                     } ?: "No task results yet")
-                views.setOnClickPendingIntent(R.id.today_reminders, openPage(context, "Notes", 103))
+                views.setOnClickPendingIntent(R.id.today_reminders, openPage(context, "Reminders", 103))
                 views.setOnClickPendingIntent(R.id.today_task, openPage(context, "Scheduled tasks", 104))
-                views.setOnClickPendingIntent(R.id.today_title, openPage(context, "Notes", 105))
+                views.setOnClickPendingIntent(R.id.today_title, openPage(context, "Reminders", 105))
                 manager.updateAppWidget(id, views)
             }
         }
