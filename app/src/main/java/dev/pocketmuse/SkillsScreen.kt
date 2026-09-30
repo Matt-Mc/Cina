@@ -12,16 +12,21 @@ import androidx.compose.ui.unit.dp
 internal fun SkillsScreen(vm: AssistantViewModel) {
     val skills by vm.skills.collectAsState()
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
     var draft by rememberSaveable { mutableStateOf("") }
     val busy by vm.busy.collectAsState()
     Page("Skills", "Guide how Cina handles familiar tasks.") {
         Text("Enabled skills guide matching requests. Changes apply to the next response. Skills use the tools and permissions you already allow.", color = Muted, fontSize = 13.sp)
+        Text("Ask Cina to create a skill for a workflow. Review its instructions before allowing it to save.", color = Muted, fontSize = 13.sp)
         if (busy) Text("Wait for the current response to finish before changing skills.", color = Muted, fontSize = 12.sp)
         skills.forEach { skill ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingToggle(skill.title, skill.description, skill.enabled) { if (!busy) vm.setSkillEnabled(skill.id, it) }
                 Text(skill.instructions, color = Muted, fontSize = 13.sp)
-                TextButton(enabled = !busy, onClick = { editingId = skill.id; draft = skill.instructions }) { Text("Edit instructions") }
+                Row {
+                    TextButton(enabled = !busy, onClick = { editingId = skill.id; draft = skill.instructions }) { Text("Edit instructions") }
+                    if (skill.custom) TextButton(enabled = !busy, onClick = { deletingId = skill.id }) { Text("Delete") }
+                }
                 HorizontalDivider(color = Line)
             }
         }
@@ -35,10 +40,18 @@ internal fun SkillsScreen(vm: AssistantViewModel) {
                 modifier = Modifier.fillMaxWidth(), minLines = 4, maxLines = 10,
                 isError = draft.trim().isEmpty() || draft.length > AssistantSkills.MAX_INSTRUCTIONS)
             Text("${draft.length}/${AssistantSkills.MAX_INSTRUCTIONS} characters", color = Muted, fontSize = 12.sp)
-            TextButton(enabled = !busy, onClick = { vm.resetSkill(editing.id); editingId = null }) { Text("Restore default instructions") }
+            if (!editing.custom) TextButton(enabled = !busy, onClick = { vm.resetSkill(editing.id); editingId = null }) { Text("Restore default instructions") }
         } },
         confirmButton = { TextButton(enabled = !busy && draft.trim().isNotEmpty() && draft.length <= AssistantSkills.MAX_INSTRUCTIONS,
             onClick = { vm.saveSkillInstructions(editing.id, draft); editingId = null }) { Text("Save") } },
         dismissButton = { TextButton(onClick = { editingId = null }) { Text("Cancel") } }
+    )
+    val deleting = skills.firstOrNull { it.id == deletingId && it.custom }
+    if (deleting != null) AlertDialog(
+        onDismissRequest = { deletingId = null },
+        title = { Text("Delete ${deleting.title}?") },
+        text = { Text("This removes the custom skill and its instructions from this phone.") },
+        confirmButton = { TextButton(enabled = !busy, onClick = { vm.deleteSkill(deleting.id); deletingId = null }) { Text("Delete") } },
+        dismissButton = { TextButton(onClick = { deletingId = null }) { Text("Cancel") } }
     )
 }

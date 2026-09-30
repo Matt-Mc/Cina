@@ -101,6 +101,10 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         if (_busy.value) return
         skillStore.saveInstructions(id, instructions); _skills.value = skillStore.read(); runtime?.invalidate()
     }
+    fun deleteSkill(id: String) {
+        if (_busy.value) return
+        skillStore.delete(id); _skills.value = skillStore.read(); runtime?.invalidate()
+    }
     fun resetSkill(id: String) {
         if (_busy.value) return
         skillStore.reset(id); _skills.value = skillStore.read(); runtime?.invalidate()
@@ -361,6 +365,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         _live.value = ""
         val result = try { dispatcher.execute(chat, request) } catch (e: CancellationException) { throw e }
             catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
+        _skills.value = skillStore.read()
         val calls = executedCalls + key
         val results = toolResults + "${request.name}: ${result.take(1200)}"
         store.activeAgentTask(chat.id)?.let { store.addTaskEvent(it.id, "${request.name}: ${result.take(300)}"); store.updateAgentTask(it.id, "active", result) }
