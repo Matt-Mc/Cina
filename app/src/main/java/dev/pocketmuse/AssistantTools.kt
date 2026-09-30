@@ -16,7 +16,7 @@ import java.time.Instant
 class AssistantTools(private val context: Context, private val store: LocalStore, private val secrets: SecretStore? = null,
                      private val mcp: McpConnections? = null, private val scheduledModelPath: String? = null) {
     private val scheduledTools = setOf("create_note", "search_notes", "create_reminder", "search_reminders", "create_scheduled_task", "list_scheduled_tasks")
-    val specification: String get() = if (scheduledModelPath != null) """
+    fun specification(webEnabled: Boolean): String = if (scheduledModelPath != null) """
         You are running an automatic scheduled task. You may use only these local tools: create_note(title:string, body:string),
         search_notes(query:string), create_reminder(title:string, when_iso:string), search_reminders(query:string),
         create_scheduled_task(title:string, prompt:string, when_iso:string, repeat:"once"|"daily"|"weekly"), list_scheduled_tasks().
@@ -35,7 +35,8 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         search_attachments(query:string): find passages in files attached to this chat, with file and passage references;
         create_scheduled_task(title:string, prompt:string, when_iso:string, repeat:"once"|"daily"|"weekly");
         list_scheduled_tasks(); create_calendar_event(title:string, start_iso:string, end_iso:string);
-        set_alarm(hour:int, minute:int, message:string); share_text(text:string); web_search(query:string).
+        set_alarm(hour:int, minute:int, message:string); share_text(text:string).
+        ${if (webEnabled) "web_search(query:string): look up current external facts when needed." else "Web search is unavailable in this chat."}
         mcp_find(query:string): find tools in connected services. Then use mcp_call(server:string, tool:string, arguments:object) with an exact listed tool name and its input schema.
         Connected services: ${mcp?.snapshot()?.filter { it.connected }?.joinToString(", ") { it.preset.title }.orEmpty().ifBlank { "none" }}.
         Scheduled tasks run prompts automatically on this phone, can use local notes, reminders, and task tools, and save a text result.
