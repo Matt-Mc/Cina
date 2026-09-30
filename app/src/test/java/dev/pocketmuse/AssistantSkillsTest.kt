@@ -4,6 +4,10 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AssistantSkillsTest {
+    @Test fun builtInProceduresHaveUniqueIdsAndFitTheLimit() {
+        assertEquals(AssistantSkills.builtIns.size, AssistantSkills.builtIns.map { it.id }.distinct().size)
+        assertTrue(AssistantSkills.builtIns.all { it.instructions.length <= AssistantSkills.MAX_INSTRUCTIONS })
+    }
     @Test fun disabledSkillsAreNotInjected() {
         assertEquals("", AssistantSkills.prompt(AssistantSkills.builtIns.map { it.copy(enabled = false) }))
     }
