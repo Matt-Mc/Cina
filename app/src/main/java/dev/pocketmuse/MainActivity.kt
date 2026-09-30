@@ -183,7 +183,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
         page = when (page) {
             "Models" -> modelReturnPage
             "Companion" -> companionReturnPage
-            "Connections", "Chat preferences", "About" -> "Settings"
+            "Connections", "Skills", "Chat preferences", "About" -> "Settings"
             "Edit profile" -> "You"
             else -> "Chat"
         }
@@ -220,6 +220,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                         "You" -> YouScreen(vm, onEditProfile = { page = "Edit profile" }, onOpenChat = { page = "Chat" })
                         "Edit profile" -> ProfileEditor(profile, onSave = { vm.saveYouProfile(it); page = "You" })
                         "Models" -> ModelsScreen(vm)
+                        "Skills" -> SkillsScreen(vm)
                         "Connections" -> ConnectionsScreen(vm)
                         "Companion" -> Page("Companion", "Make Cina your own.") { CompanionSettings(profile, vm::saveCompanionSettings) }
                         "Chat preferences" -> ChatPreferencesScreen(vm)

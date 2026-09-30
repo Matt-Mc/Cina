@@ -19,6 +19,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     private val store = LocalStore(application)
     private val attachmentImporter = AttachmentImporter(application, store)
     private val profileStore = YouProfileStore(application)
+    private val skillStore = SkillStore(application)
     val secrets = SecretStore(application)
     private val mcp = McpConnections(application, secrets)
     val library = ModelLibrary(application, store, secrets)
@@ -88,6 +89,22 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val connections = _connections.asStateFlow()
     private val _youProfile = MutableStateFlow(profileStore.read())
     val youProfile = _youProfile.asStateFlow()
+
+    private val _skills = MutableStateFlow(skillStore.read())
+    internal val skills = _skills.asStateFlow()
+
+    fun setSkillEnabled(id: String, enabled: Boolean) {
+        if (_busy.value) return
+        skillStore.setEnabled(id, enabled); _skills.value = skillStore.read(); runtime?.invalidate()
+    }
+    fun saveSkillInstructions(id: String, instructions: String) {
+        if (_busy.value) return
+        skillStore.saveInstructions(id, instructions); _skills.value = skillStore.read(); runtime?.invalidate()
+    }
+    fun resetSkill(id: String) {
+        if (_busy.value) return
+        skillStore.reset(id); _skills.value = skillStore.read(); runtime?.invalidate()
+    }
 
     fun attach(activity: Activity) {
         tools = AssistantTools(activity, store, secrets, mcp); runtime = AssistantRuntime(activity, store) { webEnabled -> tools!!.specification(webEnabled) }
