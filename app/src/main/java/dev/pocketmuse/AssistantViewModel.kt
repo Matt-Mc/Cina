@@ -176,16 +176,30 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun addNote(title: String, body: String) { if(title.isNotBlank() && body.isNotBlank()) { store.addNote(title.trim(), body.trim()); refresh() } }
     fun deleteNote(id: Long) { store.deleteNote(id); refresh() }
     fun editNote(id: Long, title: String, body: String) { if(title.isNotBlank() && body.isNotBlank()) { store.updateNote(id, title.trim(), body.trim()); refresh() } }
+    fun saveReminder(id: Long?, title: String, whenMillis: Long): Boolean {
+        if (title.isBlank() || whenMillis <= System.currentTimeMillis()) return false
+        val savedId = if (id == null) store.addReminder(title.trim(), whenMillis) else {
+            ReminderReceiver.cancel(getApplication(), id)
+            store.updateReminder(id, title.trim(), whenMillis)
+            id
+        }
+        ReminderReceiver.schedule(getApplication(), savedId, whenMillis)
+        refresh()
+        return true
+    }
+    fun deleteReminder(id: Long) { ReminderReceiver.cancel(getApplication(), id); store.deleteReminder(id); refresh() }
     fun completeReminder(id: Long) { store.completeReminder(id); ReminderReceiver.cancel(getApplication(), id); refresh() }
     fun undoReminder(id: Long) { store.setReminderDone(id, false); store.reminders().firstOrNull { it.id == id }?.takeIf { it.whenMillis > System.currentTimeMillis() }?.let { ReminderReceiver.schedule(getApplication(), id, it.whenMillis) }; refresh() }
-    fun addScheduledTask(title: String, prompt: String, whenMillis: Long, repeat: String) {
-        val model = _selectedModel.value ?: run { _status.value = "Choose a model before scheduling a task."; return }
+    fun addScheduledTask(title: String, prompt: String, whenMillis: Long, repeat: String): Boolean {
+        val model = _selectedModel.value?.takeIf { path -> _models.value.any { it.path == path } }
+            ?: run { _status.value = "Choose a model before scheduling a task."; return false }
         if (title.isBlank() || prompt.isBlank() || whenMillis <= System.currentTimeMillis() || repeat !in listOf("once", "daily", "weekly")) {
-            _status.value = "Add a title, prompt, and future time."; return
+            _status.value = "Add a title, prompt, and future time."; return false
         }
         val id = store.addScheduledTask(title.trim().take(100), prompt.trim().take(2000), model, whenMillis, repeat)
         store.scheduledTask(id)?.let { ScheduledTaskScheduler.schedule(getApplication(), it) }
         refresh(); _status.value = "Scheduled task saved. Android may start it a little late."
+        return true
     }
     fun setScheduledTaskEnabled(task: ScheduledTask, enabled: Boolean) {
         if (!enabled) {
@@ -204,14 +218,15 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun deleteMemory(id: Long) { store.deleteMemory(id); runtime?.invalidate(); refresh() }
     fun approveMemory(id: Long) { store.memorySuggestions().firstOrNull { it.id == id }?.let { store.addMemory(it.fact, it.sourceChatId, it.sourceMessageId); store.dismissMemorySuggestion(id); runtime?.invalidate(); refresh() } }
     fun dismissMemory(id: Long) { store.dismissMemorySuggestion(id); refresh() }
-    fun startGoal(goal: String) {
-        if (goal.isBlank() || _busy.value) return
-        if (_models.value.none { it.path == _selectedModel.value }) { _status.value = "Choose a downloaded model before starting a goal."; return }
-        if (store.activeAgentTask(_active.value) != null) { _status.value = "Finish or pause the current goal first."; return }
+    fun startGoal(goal: String): Boolean {
+        if (goal.isBlank() || _busy.value || _benchmarking.value != null || _pending.value != null) return false
+        if (runtime == null || tools == null) return false
+        if (_models.value.none { it.path == _selectedModel.value }) { _status.value = "Choose a downloaded model before starting a goal."; return false }
+        if (store.activeAgentTask(_active.value) != null) { _status.value = "Finish or pause the current goal first."; return false }
         val id = store.startAgentTask(_active.value, goal.trim().take(2000))
         store.addTaskEvent(id, "Goal started")
         refresh()
-        send(goal)
+        return send(goal)
     }
     fun resumeGoal(id: Long) {
         val item = store.agentTasks().firstOrNull { it.id == id } ?: return
@@ -251,14 +266,14 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun removeModel(model: LocalModel) { if(_selectedModel.value == model.path) { _status.value = "Select another model before deleting this one."; return }; library.remove(model); refresh() }
     fun clearStatus() { _status.value = "" }
 
-    fun send(text: String) {
-        if(text.isBlank() || _busy.value || _benchmarking.value != null || _pending.value != null) return
+    fun send(text: String): Boolean {
+        if(text.isBlank() || _busy.value || _benchmarking.value != null || _pending.value != null) return false
         val model = _models.value.firstOrNull { it.path == _selectedModel.value }
-        if(model == null) { _status.value = "Select a downloaded model first."; return }
-        val chat = store.chat(_active.value) ?: return
+        if(model == null) { _status.value = "Select a downloaded model first."; return false }
+        val chat = store.chat(_active.value) ?: return false
+        val assistant = runtime ?: return false
+        val dispatcher = tools ?: return false
         val messageId = store.addMessage(chat.id, "user", text.trim()); refresh()
-        val assistant = runtime ?: return
-        val dispatcher = tools ?: return
         task = viewModelScope.launch {
             _busy.value = true; _live.value = ""
             try {
@@ -288,6 +303,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             catch(e: Exception) { store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "paused", "Error: ${e.message}"); refresh() }; _status.value = e.message ?: "The model could not respond." }
             finally { _busy.value = false; _live.value = "" }
         }
+        return true
     }
 
     fun approve(always: Boolean = false) {
