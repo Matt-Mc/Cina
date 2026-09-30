@@ -319,7 +319,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         task = viewModelScope.launch {
             _busy.value = true
             try { ModelAccess.mutex.withLock {
-                runTool(chat, pendingAction.request, assistant, dispatcher, pendingAction.originalUserText, pendingAction.depth)
+                runTool(chat, pendingAction.request, assistant, dispatcher, pendingAction.originalUserText, pendingAction.depth, pendingAction.executedCalls, pendingAction.toolResults)
                 if (_pending.value == null) {
                     if (_memoryEnabled.value) try { assistant.extractMemory(pendingAction.originalUserText, chat.id, store.messages(chat.id).lastOrNull { it.role == "user" }?.id ?: 0); refresh() } catch (_: Exception) { }
                     try { assistant.summarizeOlderChat(chat.id) } catch (_: Exception) { }
@@ -332,22 +332,52 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
     fun reject() { _pending.value = null; store.activeAgentTask(_active.value)?.let { store.updateAgentTask(it.id, "paused", "Action cancelled"); store.addTaskEvent(it.id, "Action cancelled") }; store.addMessage(_active.value, "assistant", "Action cancelled."); refresh() }
-    private suspend fun runTool(chat: Chat, request: ToolRequest, assistant: AssistantRuntime, dispatcher: AssistantTools, originalUserText: String, depth: Int = 0) {
-        val result = try { dispatcher.execute(chat, request) } catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
+    private suspend fun runTool(chat: Chat, request: ToolRequest, assistant: AssistantRuntime, dispatcher: AssistantTools, originalUserText: String, depth: Int = 0,
+                                executedCalls: List<String> = emptyList(), toolResults: List<String> = emptyList()) {
+        val limit = if (store.activeAgentTask(chat.id) != null) 8 else 3
+        val key = dispatcher.callKey(request)
+        val blocked = ToolTurnPolicy.blockReason(key, dispatcher.needsConfirmation(request), executedCalls, limit)
+        if (blocked != null) {
+            finishToolLoop(chat, assistant, originalUserText, toolResults, blocked)
+            return
+        }
+        _live.value = ""
+        val result = try { dispatcher.execute(chat, request) } catch (e: CancellationException) { throw e }
+            catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
+        val calls = executedCalls + key
+        val results = toolResults + "${request.name}: ${result.take(1200)}"
         store.activeAgentTask(chat.id)?.let { store.addTaskEvent(it.id, "${request.name}: ${result.take(300)}"); store.updateAgentTask(it.id, "active", result) }
         refresh()
-        val response = assistant.generate(AssistantPrompt.toolFollowUp(originalUserText, request.name, result)) { _live.value = it }
-        val next = try { dispatcher.parse(splitModelResponse(response).answer) } catch (_: Exception) { null }
-        if (next == null) finishAnswer(chat.id, response)
-        else if (depth >= if(store.activeAgentTask(chat.id) != null) 7 else 2) {
-            store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "paused", "Action limit reached. Continue this goal to resume."); store.addTaskEvent(it.id, "Paused at action limit") }
-            store.addMessage(chat.id, "assistant", "I reached the action limit for this turn. You can continue the goal from Tasks. Last result: ${result.take(700)}")
-            refresh()
+        if (calls.size >= limit) {
+            finishToolLoop(chat, assistant, originalUserText, results, "Action limit reached.")
+            return
         }
-        else if (needsApproval(next, dispatcher, chat)) { _pending.value = PendingAction(next, originalUserText, depth + 1); _live.value = ""; store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "waiting", "Waiting for approval: ${next.name}"); store.addTaskEvent(it.id, "Approval needed: ${next.name}") }; refresh() }
-        else runTool(chat, next, assistant, dispatcher, originalUserText, depth + 1)
+        val response = assistant.generate(AssistantPrompt.toolFollowUp(originalUserText, request.name, result)) { _live.value = it }
+        val next = try { dispatcher.parse(splitModelResponse(response).answer) } catch (_: Exception) {
+            finishToolLoop(chat, assistant, originalUserText, results, "Malformed tool call stopped.")
+            return
+        }
+        if (next == null) finishAnswer(chat.id, response)
+        else if (ToolTurnPolicy.blockReason(dispatcher.callKey(next), dispatcher.needsConfirmation(next), calls, limit) != null) {
+            finishToolLoop(chat, assistant, originalUserText, results, "Repeated tool call stopped.")
+        }
+        else if (needsApproval(next, dispatcher, chat)) {
+            _pending.value = PendingAction(next, originalUserText, depth + 1, calls, results); _live.value = ""
+            store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "waiting", "Waiting for approval: ${next.name}"); store.addTaskEvent(it.id, "Approval needed: ${next.name}") }; refresh()
+        }
+        else runTool(chat, next, assistant, dispatcher, originalUserText, depth + 1, calls, results)
     }
-    private fun finishAnswer(chatId: Long, answer: String) { store.addMessage(chatId, "assistant", answer.ifBlank { "I couldn't produce a response." }); store.activeAgentTask(chatId)?.let { store.updateAgentTask(it.id, "waiting", answer); store.addTaskEvent(it.id, "Cina answered; goal remains open") }; refresh() }
+    private suspend fun finishToolLoop(chat: Chat, assistant: AssistantRuntime, originalUserText: String, results: List<String>, reason: String) {
+        _live.value = ""
+        store.log(chat.id, reason)
+        val answer = try { kotlinx.coroutines.withTimeout(60_000) { assistant.answerWithoutTools(originalUserText, results) } }
+            catch (_: kotlinx.coroutines.TimeoutCancellationException) { "I stopped the action loop. ${results.lastOrNull().orEmpty()} Please clarify what you would like me to do next." }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { "I stopped the action loop. ${results.lastOrNull().orEmpty()} Please clarify what you would like me to do next." }
+        finishAnswer(chat.id, answer)
+        store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "paused", answer); store.addTaskEvent(it.id, reason); refresh() }
+    }
+    private fun finishAnswer(chatId: Long, answer: String) { _live.value = ""; store.addMessage(chatId, "assistant", visibleModelResponse(answer).ifBlank { "I couldn't complete the response. Please try again." }); store.activeAgentTask(chatId)?.let { store.updateAgentTask(it.id, "waiting", answer); store.addTaskEvent(it.id, "Cina answered; goal remains open") }; refresh() }
     private suspend fun maybeTitle(chatId: Long, assistant: AssistantRuntime) {
         if (store.chat(chatId)?.title != "New chat") return
         val messages = store.messages(chatId)

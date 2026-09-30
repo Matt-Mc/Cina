@@ -21,6 +21,8 @@ internal object AssistantPrompt {
 
         Tool choices:
         Planning, drafting, brainstorming, and explanations usually need no tool.
+        Do not create or change notes, reminders, schedules, or events unless the user asks for that action. Helping plan a week does not mean saving a note.
+        Do not repeat a successful action. After saving what was requested, report the result and stop unless another distinct action was requested.
         Use local tools for notes, reminders, and scheduled tasks. For connected services, discover the exact tool with mcp_find before mcp_call.
         ${if (webEnabled) "Web search is available, not required. Use web_search only when the user asks for a search or the task needs current external facts. General planning or writing does not need a search." else "Web search is off. Do not call web_search. If current external facts are needed, explain that web access must be enabled."}
         After a tool result, continue the original task. Use search results as evidence to answer the request, not as a substitute for helping.

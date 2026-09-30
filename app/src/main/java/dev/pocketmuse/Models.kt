@@ -17,4 +17,4 @@ data class ChatSummary(val chatId: Long, val body: String, val throughMessageId:
 data class LocalModel(val id: Long, val name: String, val path: String, val source: String, val bytes: Long)
 data class DownloadState(val name: String = "", val received: Long = 0, val total: Long = 0, val running: Boolean = false, val error: String = "")
 data class ToolRequest(val name: String, val arguments: org.json.JSONObject)
-data class PendingAction(val request: ToolRequest, val originalUserText: String, val depth: Int = 0)
+data class PendingAction(val request: ToolRequest, val originalUserText: String, val depth: Int = 0, val executedCalls: List<String> = emptyList(), val toolResults: List<String> = emptyList())

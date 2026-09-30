@@ -61,9 +61,14 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                                 applicationContext.getSharedPreferences("settings", 0).getBoolean("memory", true),
                                 YouProfileStore(applicationContext).read())
                             var answer = splitModelResponse(runtime.generate(task.prompt) {}).answer
+                            val executedCalls = mutableListOf<String>()
                             repeat(3) {
                                 val request = tools.parse(answer) ?: return@withTimeout answer.takeIf { it.isNotBlank() }
                                     ?: error("The model did not produce a text answer.")
+                                val key = tools.callKey(request)
+                                val blocked = ToolTurnPolicy.blockReason(key, tools.needsConfirmation(request), executedCalls, 3)
+                                require(blocked == null) { blocked.orEmpty() }
+                                executedCalls.add(key)
                                 val result = try { tools.execute(chat, request) }
                                     catch (e: CancellationException) { throw e }
                                     catch (e: Exception) { "Tool error: ${e.message}" }

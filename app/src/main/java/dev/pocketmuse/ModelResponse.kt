@@ -26,3 +26,10 @@ internal fun splitModelResponse(raw: String): ModelResponse {
     }
     return ModelResponse(answer.toString().trim(), thinking.toString().trim())
 }
+
+/** Hide tool syntax from the first streamed prefix, including incomplete opening tags. */
+internal fun visibleModelResponse(raw: String): String {
+    val answer = splitModelResponse(raw).answer.trimStart()
+    return if (answer.isNotEmpty() &&
+        ("[tool]".startsWith(answer, ignoreCase = true) || answer.startsWith("[tool", ignoreCase = true))) "" else raw
+}
