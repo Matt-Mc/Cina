@@ -77,11 +77,22 @@ Long-press the Android home screen, open **Widgets**, and find **Cina**. **Quick
 
 ## Skills
 
-Open **Settings → Skills** to enable or disable Remember details, Weekly planning, Research, and Organizing notes. Each skill has a short editable procedure, stored on this phone. Restore default instructions from its editor. Changes apply to the next response, including in an existing chat; editing is unavailable during a response.
+Open **Settings → Skills** to enable, disable, or edit procedures for Remember details, Weekly planning, Research, Organizing notes, Daily check-in, Task breakdown, Decision support, Writing and editing, Document review, Weekly review, Memory maintenance, and Create a skill. Built-in instructions can be restored to defaults. Changes apply to the next response, including in an existing chat; editing is unavailable during a response.
 
-Enabled procedures are included in interactive and scheduled prompts. Cina is instructed to use only procedures that match the request. Skills guide behavior; they do not grant permissions, enable web search, or add tools. They cannot guarantee that every local model follows the procedure. The four short built-ins are loaded together; this first version does not install external skills or execute scripts. Instructions are limited to 1,200 characters each to keep local prompts manageable.
+Ask Cina to create a skill for a recurring workflow. It drafts a title, a description explaining when to use it, and instructions with steps and a completion check, then requests `create_skill`. The existing approval dialog shows all instructions before saving (unless you already allow that tool or use YOLO mode). Custom skills are enabled after saving and can be edited, toggled, or deleted in Settings. Up to eight custom skills are stored locally. Instructions are limited to 1,200 characters per skill. Repeating an identical creation does not add a duplicate; conflicting titles require editing the existing skill.
 
-When you explicitly ask Cina to remember a fact, it can request `save_memory`. The existing action approval flow shows the exact fact before saving (unless you already allow that tool or use YOLO mode). Saved facts appear in **You → Memory**, with a source conversation, and are available to future chats. Exact duplicates are not added. The tool is unavailable while memory is off or during automatic scheduled tasks. Incidental facts still use the existing suggestion review.
+Enabled procedures are included together in interactive and scheduled prompts. Cina is instructed to use only procedures that match the request. Skills do not grant permissions, enable web search, install external skills, execute scripts, or add capabilities. A larger enabled collection increases prompt size, and guidance still depends on the local model. Scheduled tasks cannot create skills or save memories. Memory maintenance reads saved facts with `search_memories` and suggests changes for review in You → Memory.
+
+When explicitly asked to remember a fact, Cina can request `save_memory`. Its approval shows the exact fact before saving, unless already allowed or using YOLO mode. Saved facts appear in **You → Memory** with a source conversation and can inform future chats. Exact duplicates are skipped. Memory tools are unavailable while memory is off. Incidental facts still use the existing suggestion review.
+
+## Skill device checks
+
+- Create a meal-planning skill, inspect its full approval, reject it, and verify nothing was saved.
+- Approve it once; verify it appears immediately in Settings, persists after restart, and can be edited, disabled, and deleted.
+- Repeat the same creation and check there is only one copy; try a conflicting title and verify the existing skill is unchanged.
+- Test limits for titles, descriptions, instructions, and the custom-skill count. Built-ins cannot be deleted or overwritten by the creation tool.
+- Ask for a daily plan, a task breakdown, or an attached-file review. Check that no unavailable tool use or unrequested writes are claimed.
+- Turn memory off and confirm memory search and saving are blocked. Review memories and verify suggested corrections are not applied automatically.
 
 ## Remote MCP tools
 
