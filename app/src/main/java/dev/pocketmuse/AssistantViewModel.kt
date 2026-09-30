@@ -90,7 +90,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val youProfile = _youProfile.asStateFlow()
 
     fun attach(activity: Activity) {
-        tools = AssistantTools(activity, store, secrets, mcp); runtime = AssistantRuntime(activity, store) { tools!!.specification }
+        tools = AssistantTools(activity, store, secrets, mcp); runtime = AssistantRuntime(activity, store) { webEnabled -> tools!!.specification(webEnabled) }
         viewModelScope.launch(Dispatchers.IO) { mcp.refreshEnabled(); _connections.value = mcp.snapshot(); runtime?.invalidate() }
     }
     fun connectMcp(id: String, token: String) {
@@ -336,7 +336,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         val result = try { dispatcher.execute(chat, request) } catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
         store.activeAgentTask(chat.id)?.let { store.addTaskEvent(it.id, "${request.name}: ${result.take(300)}"); store.updateAgentTask(it.id, "active", result) }
         refresh()
-        val response = assistant.generate("Tool result for ${request.name}: $result. Continue the user's request. You may call another tool if needed; otherwise explain the outcome. If web sources appear, include their URLs.") { _live.value = it }
+        val response = assistant.generate(AssistantPrompt.toolFollowUp(originalUserText, request.name, result)) { _live.value = it }
         val next = try { dispatcher.parse(splitModelResponse(response).answer) } catch (_: Exception) { null }
         if (next == null) finishAnswer(chat.id, response)
         else if (depth >= if(store.activeAgentTask(chat.id) != null) 7 else 2) {
