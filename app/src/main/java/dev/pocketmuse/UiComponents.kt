@@ -111,6 +111,8 @@ internal fun ActionApprovalDialog(action: PendingAction, onReject: () -> Unit, o
     var details by remember { mutableStateOf(false) }
     val request = action.request
     val title = when (request.name) {
+        "create_skill" -> "Save this skill?"
+        "save_memory" -> "Remember this detail?"
         "create_note" -> "Save this note?"
         "edit_note" -> "Update this note?"
         "delete_note" -> "Delete this note?"
@@ -131,11 +133,11 @@ internal fun ActionApprovalDialog(action: PendingAction, onReject: () -> Unit, o
                 Text("${arguments.optString("server")} · ${arguments.optString("tool").replace('_', ' ')}", color = Ink)
                 Text("This service will receive the action's arguments.", color = Muted, fontSize = 12.sp)
             }
-            val readable = listOf("title", "body", "prompt", "text", "when_iso", "start_iso", "end_iso", "repeat", "message", "hour", "minute", "id")
+            val readable = listOf("description", "instructions", "fact", "title", "body", "prompt", "text", "when_iso", "start_iso", "end_iso", "repeat", "message", "hour", "minute", "id")
                 .mapNotNull { key -> arguments.optString(key).takeIf { it.isNotBlank() }?.let { key to it } }
             readable.forEach { (key, value) ->
                 Text(when (key) { "when_iso" -> "When"; "start_iso" -> "Starts"; "end_iso" -> "Ends"; "id" -> "Item ID"; else -> key.replaceFirstChar { it.uppercase() } }, color = Muted, fontSize = 11.sp)
-                Text(value.take(800), color = Ink, fontSize = 14.sp)
+                Text(value.take(if (key == "instructions") AssistantSkills.MAX_INSTRUCTIONS else 800), color = Ink, fontSize = 14.sp)
             }
             TextButton(onClick = { details = !details }) { Text(if (details) "Hide details" else "View action details") }
             if (details) Text("${request.name}\n${arguments.toString(2)}", color = Muted, fontSize = 12.sp)

@@ -75,6 +75,25 @@ Long-press the Android home screen, open **Widgets**, and find **Cina**. **Quick
 - **You → Memory** shows proposed personal facts for review before saving them. Suggestions and saved facts show their source conversation. Cina also maintains a short rolling summary of older conversation turns for continuity.
 - In **Settings → Models → Installed**, open a model’s details and choose **Benchmark** to measure generation speed on this phone and run three short Cina task checks. The recommendation is based only on these checks and speed; test real requests before relying on a model for important work.
 
+## Skills
+
+Open **Settings → Skills** to enable, disable, or edit procedures for Remember details, Weekly planning, Research, Organizing notes, Daily check-in, Task breakdown, Decision support, Writing and editing, Document review, Weekly review, Memory maintenance, and Create a skill. Built-in instructions can be restored to defaults. Changes apply to the next response, including in an existing chat; editing is unavailable during a response.
+
+Ask Cina to create a skill for a recurring workflow. It drafts a title, a description explaining when to use it, and instructions with steps and a completion check, then requests `create_skill`. The existing approval dialog shows all instructions before saving (unless you already allow that tool or use YOLO mode). Custom skills are enabled after saving and can be edited, toggled, or deleted in Settings. Up to eight custom skills are stored locally. Instructions are limited to 1,200 characters per skill. Repeating an identical creation does not add a duplicate; conflicting titles require editing the existing skill.
+
+Enabled procedures are included together in interactive and scheduled prompts. Cina is instructed to use only procedures that match the request. Skills do not grant permissions, enable web search, install external skills, execute scripts, or add capabilities. A larger enabled collection increases prompt size, and guidance still depends on the local model. Scheduled tasks cannot create skills or save memories. Memory maintenance reads saved facts with `search_memories` and suggests changes for review in You → Memory.
+
+When explicitly asked to remember a fact, Cina can request `save_memory`. Its approval shows the exact fact before saving, unless already allowed or using YOLO mode. Saved facts appear in **You → Memory** with a source conversation and can inform future chats. Exact duplicates are skipped. Memory tools are unavailable while memory is off. Incidental facts still use the existing suggestion review.
+
+## Skill device checks
+
+- Create a meal-planning skill, inspect its full approval, reject it, and verify nothing was saved.
+- Approve it once; verify it appears immediately in Settings, persists after restart, and can be edited, disabled, and deleted.
+- Repeat the same creation and check there is only one copy; try a conflicting title and verify the existing skill is unchanged.
+- Test limits for titles, descriptions, instructions, and the custom-skill count. Built-ins cannot be deleted or overwritten by the creation tool.
+- Ask for a daily plan, a task breakdown, or an attached-file review. Check that no unavailable tool use or unrequested writes are claimed.
+- Turn memory off and confirm memory search and saving are blocked. Review memories and verify suggested corrections are not applied automatically.
+
 ## Remote MCP tools
 
 Cina includes ten hosted MCP presets: Gmail, Google Drive, Google Docs, Google Sheets, Google Slides, Google Calendar, Google Chat, Google Contacts (People API), GitHub, and Linear. You can also add an arbitrary HTTPS Streamable HTTP MCP endpoint in Settings with a name, URL, and optional bearer token. For a Claude or Codex configuration that contains a remote `url`, use that URL. A `command`/`args` configuration describes a local `stdio` server and cannot run inside Cina on Android; host that server behind an HTTPS MCP endpoint first. Cina stores custom connections on the device and removes their credentials when disconnected or removed. Linear supports browser based OAuth sign-in with automatic token renewal, as well as manual API keys or OAuth tokens. Google Workspace MCP requires a configured Google Cloud project and OAuth authorization; a pasted Google access token expires, so renew it in Settings when needed. GitHub accepts a personal access token. Presets are connection options, not accounts connected by default.

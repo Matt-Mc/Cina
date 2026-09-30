@@ -9,13 +9,16 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withTimeout
 
 class AssistantRuntime(context: Context, private val store: LocalStore, private val toolsSpecification: (Boolean) -> String) {
+    private val skillStore = SkillStore(context)
+    private var loadedSkills: String? = null
     private val engine = AiChat.getInferenceEngine(context)
     private var loadedModel: String? = null
     private var loadedChat: Long? = null
     private var loadedWeb: Boolean? = null
 
     suspend fun use(model: LocalModel, chat: Chat, memoryEnabled: Boolean, profile: YouProfile) {
-        if(ModelAccess.owner === this && loadedModel == model.path && loadedChat == chat.id && loadedWeb == chat.web && engine.state.value.isModelLoaded) return
+        val skillInstructions = AssistantSkills.prompt(skillStore.read())
+        if(ModelAccess.owner === this && loadedModel == model.path && loadedChat == chat.id && loadedWeb == chat.web && loadedSkills == skillInstructions && engine.state.value.isModelLoaded) return
         withTimeout(30_000) { engine.state.first { it is InferenceEngine.State.ModelReady || it is InferenceEngine.State.Initialized || it is InferenceEngine.State.Error } }
         if(engine.state.value.isModelLoaded || engine.state.value is InferenceEngine.State.Error) engine.cleanUp()
         withTimeout(30_000) { engine.state.first { it is InferenceEngine.State.Initialized || it is InferenceEngine.State.Error } }
@@ -36,9 +39,9 @@ class AssistantRuntime(context: Context, private val store: LocalStore, private 
         engine.setSystemPrompt(AssistantPrompt.build(
             currentTime = java.time.ZonedDateTime.now().toString(),
             webEnabled = chat.web, tools = toolsSpecification(chat.web),
-            profile = you, memory = memory, summary = summary, history = history
+            profile = you, memory = memory, summary = summary, history = history, skills = skillInstructions
         ))
-        loadedModel = model.path; loadedChat = chat.id; loadedWeb = chat.web
+        loadedModel = model.path; loadedChat = chat.id; loadedWeb = chat.web; loadedSkills = skillInstructions
         ModelAccess.owner = this
     }
 
@@ -128,7 +131,7 @@ class AssistantRuntime(context: Context, private val store: LocalStore, private 
         }
     }
 
-    fun invalidate() { loadedModel = null; loadedChat = null; loadedWeb = null }
+    fun invalidate() { loadedModel = null; loadedChat = null; loadedWeb = null; loadedSkills = null }
     fun release() {
         if (ModelAccess.owner === this) {
             if (engine.state.value.isModelLoaded || engine.state.value is InferenceEngine.State.Error) engine.cleanUp()

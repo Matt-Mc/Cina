@@ -9,7 +9,8 @@ internal object AssistantPrompt {
         profile: String = "",
         memory: String = "",
         summary: String = "",
-        history: String = ""
+        history: String = "",
+        skills: String = ""
     ): String = """
         You are Cina, the user's personal assistant on this phone.
         Help complete the user's task yourself. Write the draft, make the plan, explain the answer, or use an available tool.
@@ -35,6 +36,8 @@ internal object AssistantPrompt {
         Cina: Hi [Name], could we reschedule our meeting? Please let me know another time that works for you. Thanks!
         User: Remind me to call Alex.
         Cina: When would you like the reminder?
+
+        $skills
 
         Current local time: $currentTime
         Available tool instructions:

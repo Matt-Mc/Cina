@@ -19,6 +19,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     private val store = LocalStore(application)
     private val attachmentImporter = AttachmentImporter(application, store)
     private val profileStore = YouProfileStore(application)
+    private val skillStore = SkillStore(application)
     val secrets = SecretStore(application)
     private val mcp = McpConnections(application, secrets)
     val library = ModelLibrary(application, store, secrets)
@@ -88,6 +89,26 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val connections = _connections.asStateFlow()
     private val _youProfile = MutableStateFlow(profileStore.read())
     val youProfile = _youProfile.asStateFlow()
+
+    private val _skills = MutableStateFlow(skillStore.read())
+    internal val skills = _skills.asStateFlow()
+
+    fun setSkillEnabled(id: String, enabled: Boolean) {
+        if (_busy.value) return
+        skillStore.setEnabled(id, enabled); _skills.value = skillStore.read(); runtime?.invalidate()
+    }
+    fun saveSkillInstructions(id: String, instructions: String) {
+        if (_busy.value) return
+        skillStore.saveInstructions(id, instructions); _skills.value = skillStore.read(); runtime?.invalidate()
+    }
+    fun deleteSkill(id: String) {
+        if (_busy.value) return
+        skillStore.delete(id); _skills.value = skillStore.read(); runtime?.invalidate()
+    }
+    fun resetSkill(id: String) {
+        if (_busy.value) return
+        skillStore.reset(id); _skills.value = skillStore.read(); runtime?.invalidate()
+    }
 
     fun attach(activity: Activity) {
         tools = AssistantTools(activity, store, secrets, mcp); runtime = AssistantRuntime(activity, store) { webEnabled -> tools!!.specification(webEnabled) }
@@ -344,6 +365,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         _live.value = ""
         val result = try { dispatcher.execute(chat, request) } catch (e: CancellationException) { throw e }
             catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
+        _skills.value = skillStore.read()
         val calls = executedCalls + key
         val results = toolResults + "${request.name}: ${result.take(1200)}"
         store.activeAgentTask(chat.id)?.let { store.addTaskEvent(it.id, "${request.name}: ${result.take(300)}"); store.updateAgentTask(it.id, "active", result) }

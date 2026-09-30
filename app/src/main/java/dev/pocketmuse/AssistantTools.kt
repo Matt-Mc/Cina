@@ -30,6 +30,9 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         For example, to save a note: [tool]{"name":"create_note","arguments":{"title":"Groceries","body":"Buy milk"}}[/tool]
         After a tool result, you may call another tool or give the user a final answer.
         Available tools:
+        create_skill(title:string, description:string, instructions:string): save a custom skill only when explicitly requested. Title max 60, description max 180, instructions max 1200 characters. Uses existing action approval.
+        search_memories(query:string): read saved facts and IDs matching a query; an empty query lists recent facts. Unavailable when memory is off.
+        ${if (context.getSharedPreferences("settings", 0).getBoolean("memory", true)) "save_memory(fact:string): save a concise user-provided fact (8 to 180 characters) for future chats, only when the user asks to remember it." else "Memory is off. Do not call save_memory."}
         create_note(title:string, body:string); search_notes(query:string); edit_note(id:int,title:string,body:string); delete_note(id:int);
         create_reminder(title:string, when_iso:string); search_reminders(query:string); complete_reminder(id:int); reschedule_reminder(id:int,title:string,when_iso:string);
         search_attachments(query:string): find passages in files attached to this chat, with file and passage references;
@@ -64,7 +67,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         return request.name + ":" + canonical(request.arguments)
     }
 
-    fun needsConfirmation(request: ToolRequest) = request.name !in setOf("search_notes", "search_reminders", "search_attachments", "list_scheduled_tasks", "web_search", "mcp_find")
+    fun needsConfirmation(request: ToolRequest) = request.name !in setOf("search_notes", "search_reminders", "search_attachments", "list_scheduled_tasks", "web_search", "mcp_find", "search_memories")
     fun describe(request: ToolRequest): String = "${request.name}: ${request.arguments}"
 
     suspend fun execute(chat: Chat, request: ToolRequest): String = withContext(Dispatchers.IO) {
@@ -72,6 +75,30 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         val a = request.arguments
         fun required(key: String): String = a.getString(key).trim().also { require(it.isNotBlank() && it.length <= 2000) { "$key is required (max 2000 characters)." } }
         val result = when(request.name) {
+            "create_skill" -> {
+                val skill = SkillStore(context).create(required("title"), required("description"), required("instructions"))
+                "Skill saved: ${skill.title}. Review, edit, enable or remove it in Settings > Skills."
+            }
+            "search_memories" -> {
+                require(context.getSharedPreferences("settings", 0).getBoolean("memory", true)) { "Memory is off. Enable it in You > Memory." }
+                val query = a.getString("query").trim()
+                require(query.length <= 200) { "Memory query is too long." }
+                store.memories().filter { it.fact.contains(query, true) }.take(20)
+                    .joinToString("\n") { "#${it.id}: ${it.fact}" }.ifBlank { "No matching saved memories." }
+            }
+            "save_memory" -> {
+                require(context.getSharedPreferences("settings", 0).getBoolean("memory", true)) { "Memory is off. Enable it in You > Memory." }
+                val fact = required("fact")
+                require(fact.length in 8..180) { "Memory must be 8 to 180 characters." }
+                val existing = store.memories().any { it.fact.equals(fact, ignoreCase = true) }
+                if (existing) "Already saved in memory: $fact"
+                else {
+                    val source = store.messages(chat.id).lastOrNull { it.role == "user" }
+                    store.addMemory(fact, chat.id, source?.id)
+                    require(store.memories().any { it.fact.equals(fact, ignoreCase = true) }) { "Memory could not be saved." }
+                    "Saved in memory: $fact"
+                }
+            }
             "create_note" -> { val title = required("title"); val body = required("body"); store.addNote(title, body); "Note saved: $title" }
             "search_notes" -> {
                 val q = required("query"); store.notes().filter { it.title.contains(q, true) || it.body.contains(q, true) }.take(8).joinToString("\n") { "#${it.id} ${it.title}: ${it.body.take(500)}" }.ifBlank { "No matching notes." }

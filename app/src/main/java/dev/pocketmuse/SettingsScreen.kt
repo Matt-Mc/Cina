@@ -19,11 +19,13 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit) {
+    val skills by vm.skills.collectAsState()
     val models by vm.models.collectAsState()
     val connections by vm.connections.collectAsState()
     val profile by vm.youProfile.collectAsState()
     Page("Settings", "A few choices to make Cina yours.") {
         NavigationRow("Models", "${models.size} installed · downloads & access", { onNavigate("Models") })
+        NavigationRow("Skills", "${skills.count { it.enabled }} enabled · familiar tasks & instructions", { onNavigate("Skills") })
         NavigationRow("Connections", "${connections.count { it.connected }} connected · services & tools", { onNavigate("Connections") })
         NavigationRow("Companion", "${profile.petName.ifBlank { "Cina" }} · appearance & name", { onNavigate("Companion") })
         NavigationRow("Chat & permissions", "New chat defaults & action approvals", { onNavigate("Chat preferences") })
