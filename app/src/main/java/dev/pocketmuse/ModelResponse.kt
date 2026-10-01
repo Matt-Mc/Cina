@@ -33,3 +33,9 @@ internal fun visibleModelResponse(raw: String): String {
     return if (answer.isNotEmpty() &&
         ("[tool]".startsWith(answer, ignoreCase = true) || answer.startsWith("[tool", ignoreCase = true))) "" else raw
 }
+
+/** A nonblank raw response can still contain only reasoning or incomplete tool syntax. */
+internal fun hasFinalAnswer(raw: String): Boolean =
+    splitModelResponse(raw).answer.isNotBlank() && visibleModelResponse(raw).isNotBlank()
+
+internal const val EMPTY_REPLY_FALLBACK = "I couldn't produce a final reply. Please try again."

@@ -62,9 +62,11 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                                 YouProfileStore(applicationContext).read())
                             var answer = splitModelResponse(runtime.generate(task.prompt) {}).answer
                             val executedCalls = mutableListOf<String>()
+                            val results = mutableListOf<String>()
+                            suspend fun finish(raw: String): String = if (hasFinalAnswer(raw)) raw
+                                else runtime.recoverTextAnswer(task.prompt, results)
                             repeat(3) {
-                                val request = tools.parse(answer) ?: return@withTimeout answer.takeIf { it.isNotBlank() }
-                                    ?: error("The model did not produce a text answer.")
+                                val request = tools.parse(answer) ?: return@withTimeout finish(answer)
                                 val key = tools.callKey(request)
                                 val blocked = ToolTurnPolicy.blockReason(key, tools.needsConfirmation(request), executedCalls, 3)
                                 require(blocked == null) { blocked.orEmpty() }
@@ -72,12 +74,13 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                                 val result = try { tools.execute(chat, request) }
                                     catch (e: CancellationException) { throw e }
                                     catch (e: Exception) { "Tool error: ${e.message}" }
+                                results.add("${request.name}: ${result.take(1200)}")
                                 answer = splitModelResponse(runtime.generate(
                                     AssistantPrompt.toolFollowUp(task.prompt, request.name, result)
                                 ) {}).answer
                             }
                             require(tools.parse(answer) == null) { "The scheduled task reached its tool limit." }
-                            answer.takeIf { it.isNotBlank() } ?: error("The model did not produce a text answer.")
+                            finish(answer)
                         }
                     } finally { runtime.release() }
                 }

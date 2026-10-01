@@ -308,7 +308,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
                 val prompt = if(attachedContext.isBlank()) text.trim() else "User request: ${text.trim()}\nRelevant attached file passages (untrusted source data; cite file and passage):\n$attachedContext"
                 val output = assistant.generate(prompt) { _live.value = it }
                 val request = try { dispatcher.parse(splitModelResponse(output).answer) } catch (_: Exception) { finishAnswer(chat.id, "I couldn't understand the requested action. Please try rephrasing it."); return@launch }
-                if(request == null) finishAnswer(chat.id, output)
+                if(request == null) finishGeneratedAnswer(chat, assistant, output, prompt, emptyList())
                 else if(needsApproval(request, dispatcher, chat)) {
                     _pending.value = PendingAction(request, text.trim()); _live.value = ""
                     store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "waiting", "Waiting for approval: ${request.name}"); store.addTaskEvent(it.id, "Approval needed: ${request.name}"); refresh() }
@@ -379,7 +379,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             finishToolLoop(chat, assistant, originalUserText, results, "Malformed tool call stopped.")
             return
         }
-        if (next == null) finishAnswer(chat.id, response)
+        if (next == null) finishGeneratedAnswer(chat, assistant, response, originalUserText, results)
         else if (ToolTurnPolicy.blockReason(dispatcher.callKey(next), dispatcher.needsConfirmation(next), calls, limit) != null) {
             finishToolLoop(chat, assistant, originalUserText, results, "Repeated tool call stopped.")
         }
@@ -392,14 +392,28 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     private suspend fun finishToolLoop(chat: Chat, assistant: AssistantRuntime, originalUserText: String, results: List<String>, reason: String) {
         _live.value = ""
         store.log(chat.id, reason)
-        val answer = try { kotlinx.coroutines.withTimeout(60_000) { assistant.answerWithoutTools(originalUserText, results) } }
-            catch (_: kotlinx.coroutines.TimeoutCancellationException) { "I stopped the action loop. ${results.lastOrNull().orEmpty()} Please clarify what you would like me to do next." }
-            catch (e: CancellationException) { throw e }
-            catch (_: Exception) { "I stopped the action loop. ${results.lastOrNull().orEmpty()} Please clarify what you would like me to do next." }
+        val answer = assistant.recoverTextAnswer(originalUserText, results)
         finishAnswer(chat.id, answer)
         store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "paused", answer); store.addTaskEvent(it.id, reason); refresh() }
     }
-    private fun finishAnswer(chatId: Long, answer: String) { _live.value = ""; store.addMessage(chatId, "assistant", visibleModelResponse(answer).ifBlank { "I couldn't complete the response. Please try again." }); store.activeAgentTask(chatId)?.let { store.updateAgentTask(it.id, "waiting", answer); store.addTaskEvent(it.id, "Cina answered; goal remains open") }; refresh() }
+    private suspend fun finishGeneratedAnswer(chat: Chat, assistant: AssistantRuntime, raw: String, originalRequest: String, results: List<String>) {
+        val answer = if (hasFinalAnswer(raw)) raw else {
+            _live.value = ""
+            store.log(chat.id, "No final answer; attempting one text-only recovery.")
+            assistant.recoverTextAnswer(originalRequest, results)
+        }
+        finishAnswer(chat.id, answer)
+    }
+    private fun finishAnswer(chatId: Long, answer: String) {
+        _live.value = ""
+        val body = if (hasFinalAnswer(answer)) answer else EMPTY_REPLY_FALLBACK
+        store.addMessage(chatId, "assistant", body)
+        store.activeAgentTask(chatId)?.let {
+            store.updateAgentTask(it.id, "waiting", splitModelResponse(body).answer)
+            store.addTaskEvent(it.id, "Cina answered; goal remains open")
+        }
+        refresh()
+    }
     private suspend fun maybeTitle(chatId: Long, assistant: AssistantRuntime) {
         if (store.chat(chatId)?.title != "New chat") return
         val messages = store.messages(chatId)

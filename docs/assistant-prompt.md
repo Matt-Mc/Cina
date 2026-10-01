@@ -64,3 +64,9 @@ Device regressions to check:
 - Confirm tool prefixes never remain visible after the completed answer, even
   while memory extraction is running.
 - Stop during recovery. Expect cancellation and a clean next turn.
+
+## Empty-answer recovery
+
+A completed generation is accepted as a reply only when its answer (outside optional thinking blocks) contains text and is not a tool prefix. Empty output, closed or unclosed thinking-only output, and incomplete tool prefixes trigger one fresh text-only attempt. Chat passes the original request and actual tool results, clears the old preview, and never executes recovery output as a tool. The recovery has a 60-second limit and cannot recursively retry. Cancellation propagates; failure, timeout, or another empty response yields a fixed visible fallback. Scheduled responses use the same recovery and retain their overall eight-minute run limit. The final persistence guard also rejects reasoning-only messages.
+
+Device checks: try the reported Qwen3-0.6B planning request after a tool error; verify a final question or explicit fallback appears. Check ordinary text replies and successful tool replies are not retried. Force a thinking-only initial reply and a thinking-only recovery, stop during recovery, and verify there is no extra tool execution or retry loop. Recovery reloads the model and can add latency. These changes address missing replies; they do not guarantee the model chooses the right tool.
