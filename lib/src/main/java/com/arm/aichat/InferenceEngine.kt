@@ -25,6 +25,9 @@ interface InferenceEngine {
      */
     suspend fun setSystemPrompt(systemPrompt: String)
 
+    /** Count text tokens using the loaded model, without changing its conversation. */
+    suspend fun countTokens(text: String): Int
+
     /**
      * Sends a user prompt to the loaded model and returns a Flow of generated tokens.
      */
