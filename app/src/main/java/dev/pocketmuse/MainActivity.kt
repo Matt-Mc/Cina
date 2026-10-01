@@ -312,12 +312,17 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
         Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundControl("☰", "Open menu", onMenu)
             Spacer(Modifier.width(12.dp))
+            if (profile.showPet) {
+                CompanionBubble(profile, 40.dp, Modifier.clickable(onClickLabel = "Customize companion", onClick = onCompanion))
+                Spacer(Modifier.width(8.dp))
+            }
             Column(Modifier.weight(1f).clickable(onClickLabel = "Open conversations") { showChats = true }) {
                 Text("cina", fontFamily = FontFamily.Serif, fontSize = 27.sp, color = Ink)
                 Text("${chat?.title ?: "New chat"} ⌄", color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            Spacer(Modifier.width(8.dp))
             RoundControl("＋", "New chat") { vm.newChat() }
-            if (profile.showPet) CompanionBubble(profile, 40.dp, Modifier.clickable(onClickLabel = "Customize companion", onClick = onCompanion))
+            Spacer(Modifier.width(4.dp))
             Box {
                 RoundControl("⋯", "Chat options") { showOptions = true }
                 DropdownMenu(expanded = showOptions, onDismissRequest = { showOptions = false }, containerColor = Paper) {
