@@ -97,6 +97,8 @@ internal class InferenceEngineImpl private constructor(
     @FastNative
     private external fun processSystemPrompt(systemPrompt: String): Int
 
+    private external fun tokenizeCount(text: String): Int
+
     @FastNative
     private external fun processUserPrompt(userPrompt: String, predictLength: Int): Int
 
@@ -214,6 +216,11 @@ internal class InferenceEngineImpl private constructor(
     /**
      * Send plain text user prompt to LLM, which starts generating tokens in a [Flow]
      */
+    override suspend fun countTokens(text: String): Int = withContext(llamaDispatcher) {
+        check(_state.value is InferenceEngine.State.ModelReady) { "Token counting requires a ready model" }
+        tokenizeCount(text).also { check(it >= 0) { "Token counting failed" } }
+    }
+
     override fun sendUserPrompt(
         message: String,
         predictLength: Int,
