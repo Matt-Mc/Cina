@@ -73,6 +73,17 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_load(JNIEnv *env, jobject, jstr
     return 0;
 }
 
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_arm_aichat_internal_InferenceEngineImpl_tokenizeCount(JNIEnv *env, jobject, jstring text) {
+    if (!g_context) return -1;
+    const auto *value = env->GetStringUTFChars(text, nullptr);
+    if (!value) return -1;
+    const auto tokens = common_tokenize(g_context, value, false, true);
+    env->ReleaseStringUTFChars(text, value);
+    return static_cast<jint>(tokens.size());
+}
+
 static llama_context *init_context(llama_model *model, const int n_ctx = DEFAULT_CONTEXT_SIZE) {
     if (!model) {
         LOGe("%s: model cannot be null", __func__);
