@@ -7,8 +7,8 @@ data class Reminder(val id: Long, val title: String, val whenMillis: Long, val d
 data class ScheduledTask(val id: Long, val title: String, val prompt: String, val modelPath: String,
     val nextRunMillis: Long, val repeat: String, val enabled: Boolean, val lastRunMillis: Long?,
     val lastResult: String?, val lastError: String?)
-data class Memory(val id: Long, val fact: String, val sourceChatId: Long? = null, val sourceMessageId: Long? = null)
-data class MemorySuggestion(val id: Long, val fact: String, val sourceChatId: Long, val sourceMessageId: Long)
+data class Memory(val id: Long, val fact: String, val sourceChatId: Long? = null, val sourceMessageId: Long? = null, val kind: String = "durable", val expiresMillis: Long? = null)
+data class MemorySuggestion(val id: Long, val fact: String, val sourceChatId: Long, val sourceMessageId: Long, val kind: String = "durable", val expiresMillis: Long? = null, val replacesId: Long? = null)
 data class AgentTask(val id: Long, val chatId: Long, val goal: String, val status: String, val lastResult: String, val updatedAt: Long)
 data class ChatAttachment(val id: Long, val chatId: Long, val name: String, val mimeType: String, val textLength: Int)
 data class AttachmentHit(val attachmentId: Long, val name: String, val chunk: Int, val body: String)

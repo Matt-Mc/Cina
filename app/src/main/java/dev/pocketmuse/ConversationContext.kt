@@ -7,13 +7,26 @@ internal object ConversationContext {
     // Reserve space for chat-template tokens, the current request, tool results and generation.
     const val TURN_HEADROOM = 2048
 
+    suspend fun bounded(text: String, budget: Int, count: suspend (String) -> Int): String {
+        if (budget <= 0) return ""
+        if (count(text) <= budget) return text
+        var low = 0; var high = text.length; var best = ""
+        while(low <= high) {
+            val middle = (low + high) / 2
+            val clipped = text.take(middle) + "\n[context shortened]"
+            if(count(clipped) <= budget) { best = clipped; low = middle + 1 } else high = middle - 1
+        }
+        return best
+    }
+
     suspend fun recent(messages: List<Message>, budget: Int, count: suspend (String) -> Int): String {
         if (budget <= 0) return ""
         val selected = mutableListOf<String>()
         for (message in messages.asReversed()) {
             val body = if (message.role == "assistant") splitModelResponse(message.body).answer else message.body
             if (body.isBlank()) continue
-            val line = "${message.role}: $body"
+            val date = if(message.time > 0) "[${java.time.Instant.ofEpochMilli(message.time).atZone(java.time.ZoneId.systemDefault()).toLocalDate()}] " else ""
+            val line = "${message.role}: $date$body"
             val candidate = (listOf(line) + selected).joinToString("\n")
             if (count(candidate) <= budget) {
                 selected.add(0, line)
@@ -28,7 +41,7 @@ internal object ConversationContext {
                         val keep = (low + high) / 2
                         val start = keep / 2
                         val end = keep - start
-                        val clipped = "${message.role}: ${String(points, 0, start)}\n[message shortened]\n${String(points, points.size - end, end)}"
+                        val clipped = "${message.role}: $date${String(points, 0, start)}\n[message shortened]\n${String(points, points.size - end, end)}"
                         if (count(clipped) <= budget) { best = clipped; low = keep + 1 }
                         else high = keep - 1
                     }

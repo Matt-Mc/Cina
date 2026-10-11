@@ -98,6 +98,15 @@ internal class InferenceEngineImpl private constructor(
     private external fun processSystemPrompt(systemPrompt: String): Int
 
     private external fun tokenizeCount(text: String): Int
+    private external fun nativeContextCapacity(): Int
+    override suspend fun contextCapacity(): Int = withContext(llamaDispatcher) { nativeContextCapacity() }
+
+    private external fun configureThinking(enabled: Boolean): Boolean
+
+    override suspend fun setThinking(enabled: Boolean): Boolean = withContext(llamaDispatcher) {
+        check(_state.value is InferenceEngine.State.ModelReady)
+        configureThinking(enabled)
+    }
 
     @FastNative
     private external fun processUserPrompt(userPrompt: String, predictLength: Int): Int
@@ -116,6 +125,14 @@ internal class InferenceEngineImpl private constructor(
     override val state: StateFlow<InferenceEngine.State> = _state.asStateFlow()
 
     private var _readyForSystemPrompt = false
+    override var lastPromptProcessingMillis: Long = 0
+        private set
+
+    override suspend fun resetSystemPrompt(systemPrompt: String) = withContext(llamaDispatcher) {
+        check(_state.value is InferenceEngine.State.ModelReady)
+        _readyForSystemPrompt = true
+        setSystemPrompt(systemPrompt)
+    }
     @Volatile
     private var _cancelGeneration = false
 
@@ -235,12 +252,15 @@ internal class InferenceEngineImpl private constructor(
             _readyForSystemPrompt = false
             _state.value = InferenceEngine.State.ProcessingUserPrompt
 
+            val promptStarted = android.os.SystemClock.elapsedRealtime()
             processUserPrompt(message, predictLength).let { result ->
                 if (result != 0) {
                     Log.e(TAG, "Failed to process user prompt: $result")
                     return@flow
                 }
             }
+
+            lastPromptProcessingMillis = android.os.SystemClock.elapsedRealtime() - promptStarted
 
             Log.i(TAG, "User prompt processed. Generating assistant prompt...")
             _state.value = InferenceEngine.State.Generating

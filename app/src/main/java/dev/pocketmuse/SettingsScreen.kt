@@ -24,6 +24,7 @@ internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit
     val connections by vm.connections.collectAsState()
     val profile by vm.youProfile.collectAsState()
     Page("Settings", "A few choices to make Cina yours.") {
+        ResponseSettings(vm)
         NavigationRow("Models", "${models.size} installed · downloads & access", { onNavigate("Models") })
         NavigationRow("Skills", "${skills.count { it.enabled }} enabled · familiar tasks & instructions", { onNavigate("Skills") })
         NavigationRow("Connections", "${connections.count { it.connected }} connected · services & tools", { onNavigate("Connections") })
@@ -33,6 +34,41 @@ internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit
         Text("Conversations, notes, and personal details stay on this phone. Connected services receive data when you use them.",
             color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
     }
+}
+
+@Composable
+internal fun ResponseSettings(vm: AssistantViewModel) {
+    val mode by vm.responseMode.collectAsState()
+    val models by vm.models.collectAsState()
+    val samples by vm.performanceSamples.collectAsState()
+    var assigning by remember { mutableStateOf<ResponseMode?>(null) }
+    var showTimings by remember { mutableStateOf(false) }
+    var revision by remember { mutableIntStateOf(0) }
+    SectionTitle("Response mode")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ResponseMode.entries.forEach { choice ->
+            FilterChip(selected = mode == choice, onClick = { vm.setResponseMode(choice) }, label = { Text(choice.name.lowercase().replaceFirstChar { it.uppercase() }) })
+        }
+    }
+    Text("Auto uses Quick for ordinary requests and Deep for complex work. Quick disables thinking when the model supports it. Both modes can use the same model.", color = Muted, fontSize = 12.sp)
+    listOf(ResponseMode.QUICK, ResponseMode.DEEP).forEach { choice ->
+        val path = remember(revision, models) { vm.assignedModel(choice) }
+        TextButton(onClick = { assigning = choice }) { Text("${choice.name.lowercase().replaceFirstChar { it.uppercase() }} model: ${models.firstOrNull { it.path == path }?.name ?: "Use selected model"}") }
+    }
+    TextButton(onClick = { showTimings = true }) { Text("Response timings · ${samples.size} recent runs") }
+    if (assigning != null) AlertDialog(onDismissRequest = { assigning = null }, title = { Text("Choose local model") }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            TextButton(onClick = { vm.assignModel(assigning!!, null); revision++; assigning = null }) { Text("Use selected model") }
+            models.forEach { model -> TextButton(onClick = { vm.assignModel(assigning!!, model.path); revision++; assigning = null }) { Text(model.name) } }
+        }
+    }, confirmButton = { TextButton(onClick = { assigning = null }) { Text("Close") } })
+    if (showTimings) AlertDialog(onDismissRequest = { showTimings = false }, title = { Text("Local response timings") }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Milestones are measured from Send. Prompt processing is a duration. No message content is recorded.")
+            if(samples.isEmpty()) Text("Send a request to collect a sample.")
+            samples.forEach { Text(it, fontSize = 12.sp); HorizontalDivider() }
+        }
+    }, confirmButton = { TextButton(onClick = { showTimings = false }) { Text("Close") } }, dismissButton = { TextButton(onClick = vm::clearPerformance) { Text("Clear") } })
 }
 
 @Composable
