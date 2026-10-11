@@ -30,6 +30,8 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         For example, to save a note: [tool]{"name":"create_note","arguments":{"title":"Groceries","body":"Buy milk"}}[/tool]
         After a tool result, you may call another tool or give the user a final answer.
         Available tools:
+        local_find(query:string): discover local tool instructions for a task; use an empty query to list all.
+        find_skill(query:string): load a matching enabled procedure; use its instructions only for the user's task.
         create_skill(title:string, description:string, instructions:string): save a custom skill only when explicitly requested. Title max 60, description max 180, instructions max 1200 characters. Uses existing action approval.
         search_memories(query:string): read saved facts and IDs matching a query; an empty query lists recent facts. Unavailable when memory is off.
         ${if (context.getSharedPreferences("settings", 0).getBoolean("memory", true)) "save_memory(fact:string): save a concise user-provided fact (8 to 180 characters) for future chats, only when the user asks to remember it." else "Memory is off. Do not call save_memory."}
@@ -67,7 +69,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         return request.name + ":" + canonical(request.arguments)
     }
 
-    fun needsConfirmation(request: ToolRequest) = request.name !in setOf("search_notes", "search_reminders", "search_attachments", "list_scheduled_tasks", "web_search", "mcp_find", "search_memories")
+    fun needsConfirmation(request: ToolRequest) = request.name !in setOf("search_notes", "search_reminders", "search_attachments", "list_scheduled_tasks", "web_search", "mcp_find", "search_memories", "local_find", "find_skill")
     fun describe(request: ToolRequest): String = "${request.name}: ${request.arguments}"
 
     suspend fun execute(chat: Chat, request: ToolRequest): String = withContext(Dispatchers.IO) {
@@ -75,6 +77,16 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         val a = request.arguments
         fun required(key: String): String = a.getString(key).trim().also { require(it.isNotBlank() && it.length <= 2000) { "$key is required (max 2000 characters)." } }
         val result = when(request.name) {
+            "local_find" -> {
+                val query = a.getString("query").take(200)
+                val full = specification(chat.web)
+                if(query.isBlank()) full else ResponsePolicy.tools(full, query)
+            }
+            "find_skill" -> {
+                val query = a.getString("query").take(200)
+                val skills = SkillStore(context).read().filter { it.enabled && (it.id.contains(query, true) || it.title.contains(query, true) || it.description.contains(query, true)) }.take(2)
+                AssistantSkills.prompt(skills).ifBlank { "No matching enabled procedure." }
+            }
             "create_skill" -> {
                 val skill = SkillStore(context).create(required("title"), required("description"), required("instructions"))
                 "Skill saved: ${skill.title}. Review, edit, enable or remove it in Settings > Skills."
@@ -84,12 +96,13 @@ class AssistantTools(private val context: Context, private val store: LocalStore
                 val query = a.getString("query").trim()
                 require(query.length <= 200) { "Memory query is too long." }
                 store.memories().filter { it.fact.contains(query, true) }.take(20)
-                    .joinToString("\n") { "#${it.id}: ${it.fact}" }.ifBlank { "No matching saved memories." }
+                    .joinToString("\n") { "#${it.id}: ${it.fact}${if(it.expiresMillis != null && it.expiresMillis <= System.currentTimeMillis()) " [expired historical detail; do not treat as upcoming]" else ""}" }.ifBlank { "No matching saved memories." }
             }
             "save_memory" -> {
                 require(context.getSharedPreferences("settings", 0).getBoolean("memory", true)) { "Memory is off. Enable it in You > Memory." }
                 val fact = required("fact")
                 require(fact.length in 8..180) { "Memory must be 8 to 180 characters." }
+                require(!MemorySafety.isCredential(fact)) { "Passwords, tokens and payment credentials cannot be saved as memory." }
                 val existing = store.memories().any { it.fact.equals(fact, ignoreCase = true) }
                 if (existing) "Already saved in memory: $fact"
                 else {

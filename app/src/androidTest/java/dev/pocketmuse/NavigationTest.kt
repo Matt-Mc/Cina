@@ -18,7 +18,19 @@ import org.junit.Rule
 import org.junit.Test
 
 class NavigationTest {
+    @get:Rule(order = 0) val permissions = NotificationPermissionRule()
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun responseModesAndLocalTimingsAreAccessible() {
+        compose.onNodeWithText("Quick").performClick().assertIsSelected()
+        compose.onNodeWithText("Deep").performClick().assertIsSelected()
+        compose.onNodeWithText("Auto").performClick().assertIsSelected()
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithText("Response mode").assertIsDisplayed()
+        compose.onNodeWithText("Response timings", substring = true).performClick()
+        compose.onNodeWithText("Local response timings").assertIsDisplayed()
+    }
 
     @Test fun drawerGroupsFeaturesIntoFiveDestinations() {
         compose.onNodeWithContentDescription("Open menu").performClick()
@@ -72,6 +84,7 @@ private fun launchRule(intent: Intent) = AndroidComposeTestRule<ActivityScenario
 }
 
 class ReminderNavigationTest {
+    @get:Rule(order = 0) val permissions = NotificationPermissionRule()
     @get:Rule val compose = launchRule(Intent(ApplicationProvider.getApplicationContext<Context>(), MainActivity::class.java)
         .putExtra(MainActivity.EXTRA_WIDGET_PAGE, "Reminders"))
 
@@ -82,6 +95,7 @@ class ReminderNavigationTest {
 }
 
 class ScheduledNavigationTest {
+    @get:Rule(order = 0) val permissions = NotificationPermissionRule()
     @get:Rule val compose = launchRule(Intent(ApplicationProvider.getApplicationContext<Context>(), MainActivity::class.java)
         .putExtra("open_scheduled_tasks", true))
 

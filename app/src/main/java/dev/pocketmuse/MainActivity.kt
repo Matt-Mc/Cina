@@ -309,6 +309,19 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
         if (messages.isNotEmpty() || busy) listState.animateScrollToItem(if (busy) messages.size else (messages.size - 1).coerceAtLeast(0))
     }
     Column(Modifier.fillMaxSize()) {
+        val responseMode by vm.responseMode.collectAsState()
+        val resolvedMode by vm.resolvedMode.collectAsState()
+        val responseModel by vm.responseModelName.collectAsState()
+        val undo by vm.memoryUndo.collectAsState()
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ResponseMode.entries.forEach { mode -> FilterChip(selected = mode == responseMode, onClick = { vm.setResponseMode(mode) }, label = { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }) }) }
+        }
+        if (responseMode == ResponseMode.AUTO && resolvedMode != null) Text("Last response: ${resolvedMode!!.name.lowercase()} · $responseModel", Modifier.padding(horizontal = 20.dp), color = Muted, fontSize = 11.sp)
+        if (undo.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Saved ${undo.size} useful detail(s)", Modifier.weight(1f), color = Muted, fontSize = 12.sp)
+            TextButton(onClick = vm::undoMemories) { Text("Undo") }
+            TextButton(onClick = vm::keepMemories) { Text("Keep") }
+        }
         Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundControl("☰", "Open menu", onMenu)
             Spacer(Modifier.width(12.dp))

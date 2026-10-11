@@ -5,7 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.content.ContentValues
 
-class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 5) {
+class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 6) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE chats(id INTEGER PRIMARY KEY, title TEXT NOT NULL, web INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL, time INTEGER NOT NULL)")
@@ -17,13 +17,52 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         createScheduledTasks(db)
         createAgentTables(db)
         createChatSummaries(db)
+        createMemoryProcessing(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createScheduledTasks(db)
         if (oldVersion < 3) createAgentTables(db)
         if (oldVersion < 4) createChatSummaries(db)
         if (oldVersion < 5) db.execSQL("ALTER TABLE reminders ADD COLUMN notified_ms INTEGER")
+        if (oldVersion < 6) createMemoryProcessing(db)
     }
+    private fun createMemoryProcessing(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE memories ADD COLUMN kind TEXT NOT NULL DEFAULT 'durable'")
+        db.execSQL("ALTER TABLE memories ADD COLUMN expires_ms INTEGER")
+        db.execSQL("ALTER TABLE memory_suggestions ADD COLUMN kind TEXT NOT NULL DEFAULT 'durable'")
+        db.execSQL("ALTER TABLE memory_suggestions ADD COLUMN expires_ms INTEGER")
+        db.execSQL("ALTER TABLE memory_suggestions ADD COLUMN replaces_id INTEGER")
+        db.execSQL("CREATE TABLE memory_jobs(message_id INTEGER PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, completed INTEGER NOT NULL DEFAULT 0)")
+    }
+    @Synchronized fun queueMemory(messageId: Long) {
+        writableDatabase.insertWithOnConflict("memory_jobs", null, ContentValues().apply { put("message_id", messageId) }, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+    @Synchronized fun pendingMemory(): List<Message> = buildList {
+        readableDatabase.rawQuery("SELECT m.id,m.chat_id,m.role,m.body,m.time FROM memory_jobs j JOIN messages m ON m.id=j.message_id WHERE j.completed=0 AND j.attempts<3 ORDER BY j.attempts,m.id LIMIT 3", null).use { c ->
+            while(c.moveToNext()) add(Message(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getLong(4)))
+        }
+    }
+    @Synchronized fun memoryAttempt(id: Long) { writableDatabase.execSQL("UPDATE memory_jobs SET attempts=attempts+1 WHERE message_id=?", arrayOf(id)) }
+    @Synchronized fun completeMemory(id: Long) { writableDatabase.execSQL("UPDATE memory_jobs SET completed=1 WHERE message_id=?", arrayOf(id)) }
+    @Synchronized fun stalledMemoryCount(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM memory_jobs WHERE completed=0 AND attempts>=3", null).use { it.moveToFirst(); it.getInt(0) }
+    @Synchronized fun retryMemory() { writableDatabase.execSQL("UPDATE memory_jobs SET attempts=0 WHERE completed=0") }
+    @Synchronized fun memoryReplacement(fact: String, id: Long?) { writableDatabase.update("memory_suggestions", ContentValues().apply { put("replaces_id", id) }, "fact=?", arrayOf(fact)) }
+    @Synchronized fun acceptMemorySuggestion(id: Long) {
+        val suggestion = memorySuggestions().firstOrNull { it.id == id } ?: return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            addMemory(suggestion.fact, suggestion.sourceChatId, suggestion.sourceMessageId)
+            memoryMetadata(suggestion.fact, suggestion.kind, suggestion.expiresMillis, false)
+            suggestion.replacesId?.let { old -> if(memories().any { it.fact == suggestion.fact && it.id != old }) deleteMemory(old) }
+            dismissMemorySuggestion(id)
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+    @Synchronized fun memoryMetadata(fact: String, kind: String, expires: Long?, suggestion: Boolean) {
+        writableDatabase.update(if(suggestion) "memory_suggestions" else "memories", ContentValues().apply { put("kind", kind); put("expires_ms", expires) }, "fact=?", arrayOf(fact))
+    }
+    @Synchronized fun activeMemories(): List<Memory> = memories().filter { it.expiresMillis == null || it.expiresMillis > System.currentTimeMillis() }
     private fun createScheduledTasks(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE scheduled_tasks(id INTEGER PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL, model_path TEXT NOT NULL, next_run_ms INTEGER NOT NULL, repeat_rule TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_run_ms INTEGER, last_result TEXT, last_error TEXT)")
     }
@@ -107,15 +146,15 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         }, "id=? AND next_run_ms=? AND enabled=1", arrayOf(id.toString(), runMillis.toString()))
     }
     @Synchronized fun addMemory(fact: String, chatId: Long? = null, messageId: Long? = null) { writableDatabase.insertWithOnConflict("memories", null, ContentValues().apply { put("fact", fact); put("source_chat_id", chatId); put("source_message_id", messageId) }, SQLiteDatabase.CONFLICT_IGNORE) }
-    @Synchronized fun memories(): List<Memory> = buildList { readableDatabase.rawQuery("SELECT id,fact,source_chat_id,source_message_id FROM memories ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Memory(c.getLong(0), c.getString(1), if(c.isNull(2)) null else c.getLong(2), if(c.isNull(3)) null else c.getLong(3))) } }
+    @Synchronized fun memories(): List<Memory> = buildList { readableDatabase.rawQuery("SELECT id,fact,source_chat_id,source_message_id,kind,expires_ms FROM memories ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Memory(c.getLong(0), c.getString(1), if(c.isNull(2)) null else c.getLong(2), if(c.isNull(3)) null else c.getLong(3), c.getString(4), if(c.isNull(5)) null else c.getLong(5))) } }
     @Synchronized fun updateMemory(id: Long, fact: String) { writableDatabase.update("memories", ContentValues().apply { put("fact", fact) }, "id=?", arrayOf(id.toString())) }
     @Synchronized fun deleteMemory(id: Long) { writableDatabase.delete("memories", "id=?", arrayOf(id.toString())) }
     @Synchronized fun suggestMemory(fact: String, chatId: Long, messageId: Long) {
         writableDatabase.insertWithOnConflict("memory_suggestions", null, ContentValues().apply { put("fact", fact); put("source_chat_id", chatId); put("source_message_id", messageId) }, SQLiteDatabase.CONFLICT_IGNORE)
     }
     @Synchronized fun memorySuggestions(): List<MemorySuggestion> = buildList {
-        readableDatabase.rawQuery("SELECT id,fact,source_chat_id,source_message_id FROM memory_suggestions ORDER BY id DESC", null).use { c ->
-            while(c.moveToNext()) add(MemorySuggestion(c.getLong(0), c.getString(1), c.getLong(2), c.getLong(3)))
+        readableDatabase.rawQuery("SELECT id,fact,source_chat_id,source_message_id,kind,expires_ms,replaces_id FROM memory_suggestions ORDER BY id DESC", null).use { c ->
+            while(c.moveToNext()) add(MemorySuggestion(c.getLong(0), c.getString(1), c.getLong(2), c.getLong(3), c.getString(4), if(c.isNull(5)) null else c.getLong(5), if(c.isNull(6)) null else c.getLong(6)))
         }
     }
     @Synchronized fun dismissMemorySuggestion(id: Long) { writableDatabase.delete("memory_suggestions", "id=?", arrayOf(id.toString())) }

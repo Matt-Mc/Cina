@@ -26,6 +26,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     private var runtime: AssistantRuntime? = null
     private var tools: AssistantTools? = null
     private var task: Job? = null
+    private var housekeeping: Job? = null
     private var downloadJob: Job? = null
     private val prefs = application.getSharedPreferences("settings", 0)
     private val downloadPrefs = application.getSharedPreferences("downloads", 0)
@@ -69,6 +70,61 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     val pending = _pending.asStateFlow()
     private val _selectedModel = MutableStateFlow(prefs.getString("model", null))
     val selectedModel = _selectedModel.asStateFlow()
+    private val _responseMode = MutableStateFlow(runCatching { ResponseMode.valueOf(prefs.getString("response_mode", "AUTO")!!) }.getOrDefault(ResponseMode.AUTO))
+    internal val responseMode = _responseMode.asStateFlow()
+    private val _resolvedMode = MutableStateFlow<ResponseMode?>(null)
+    internal val resolvedMode = _resolvedMode.asStateFlow()
+    private val _responseModelName = MutableStateFlow<String?>(null)
+    internal val responseModelName = _responseModelName.asStateFlow()
+    private val _performanceSamples = MutableStateFlow(LocalPerformance(application).read())
+    internal val performanceSamples = _performanceSamples.asStateFlow()
+    private val _memoryUndo = MutableStateFlow(prefs.getStringSet("memory_undo", emptySet())!!.mapNotNull { it.toLongOrNull() })
+    internal val memoryUndo = _memoryUndo.asStateFlow()
+    private val _stalledMemories = MutableStateFlow(store.stalledMemoryCount())
+    internal val stalledMemories = _stalledMemories.asStateFlow()
+    internal fun retryMemoryProcessing() { store.retryMemory(); _stalledMemories.value = 0; resumeMemoryProcessing() }
+    internal fun keepMemories() { _memoryUndo.value = emptyList(); prefs.edit().remove("memory_undo").apply() }
+    internal fun setResponseMode(mode: ResponseMode) { if (_busy.value) return; _responseMode.value = mode; prefs.edit().putString("response_mode", mode.name).apply() }
+    internal fun assignedModel(mode: ResponseMode): String? = prefs.getString("model_" + mode.name, null)
+    internal fun assignModel(mode: ResponseMode, path: String?) { prefs.edit().putString("model_" + mode.name, path).apply() }
+    internal fun clearPerformance() { LocalPerformance(getApplication()).clear(); _performanceSamples.value = emptyList() }
+    internal fun undoMemories() { _memoryUndo.value.forEach(store::deleteMemory); _memoryUndo.value = emptyList(); prefs.edit().remove("memory_undo").apply(); runtime?.invalidate(); refresh() }
+    private fun maintain(assistant: AssistantRuntime, chatId: Long) {
+        assistant.performance.mark("answer_ready_ms")
+        housekeeping = viewModelScope.launch {
+            try { ModelAccess.mutex.withLock {
+                if (_memoryEnabled.value) assistant.processMemoryJobs { id ->
+                    _memoryUndo.value = (_memoryUndo.value + id).distinct()
+                    prefs.edit().putStringSet("memory_undo", _memoryUndo.value.map { it.toString() }.toSet()).apply()
+                    refresh()
+                }
+                refresh()
+                kotlinx.coroutines.withTimeout(25_000) { assistant.summarizeOlderChat(chatId) }
+                assistant.performance.mark("summary_finished_ms")
+                kotlinx.coroutines.withTimeout(10_000) { maybeTitle(chatId, assistant) }
+                assistant.performance.mark("title_finished_ms")
+            } } catch (_: CancellationException) { } catch (_: Exception) { }
+            finally { assistant.invalidate(); assistant.performance.finish("completed"); _performanceSamples.value = assistant.performance.read(); _stalledMemories.value = store.stalledMemoryCount() }
+        }
+    }
+    private fun resumeMemoryProcessing() {
+        if (!_memoryEnabled.value || _busy.value || store.pendingMemory().isEmpty()) return
+        val model = _models.value.firstOrNull { it.path == _selectedModel.value } ?: return
+        val assistant = runtime ?: return
+        val chat = store.chat(_active.value) ?: return
+        housekeeping?.cancel()
+        housekeeping = viewModelScope.launch {
+            try { ModelAccess.mutex.withLock {
+                assistant.prepareMemory(model)
+                assistant.processMemoryJobs { id ->
+                    _memoryUndo.value = (_memoryUndo.value + id).distinct()
+                    prefs.edit().putStringSet("memory_undo", _memoryUndo.value.map { it.toString() }.toSet()).apply()
+                    refresh()
+                }
+            } } catch (_: CancellationException) { } catch (_: Exception) { }
+            finally { assistant.invalidate(); _stalledMemories.value = store.stalledMemoryCount(); refresh() }
+        }
+    }
     private val _memoryEnabled = MutableStateFlow(prefs.getBoolean("memory", true))
     val memoryEnabled = _memoryEnabled.asStateFlow()
     private val _defaultWeb = MutableStateFlow(prefs.getBoolean("default_web", false))
@@ -111,7 +167,9 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun attach(activity: Activity) {
+        housekeeping?.cancel()
         tools = AssistantTools(activity, store, secrets, mcp); runtime = AssistantRuntime(activity, store) { webEnabled -> tools!!.specification(webEnabled) }
+        resumeMemoryProcessing()
         viewModelScope.launch(Dispatchers.IO) { mcp.refreshEnabled(); _connections.value = mcp.snapshot(); runtime?.invalidate() }
     }
     fun connectMcp(id: String, token: String) {
@@ -163,8 +221,8 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun openChat(id: Long) { stop(); store.endChat(_active.value); _active.value = id; refresh() }
     fun setFlag(flag: String, enabled: Boolean) { store.setChatFlag(_active.value, flag, enabled); refresh() }
     fun endSession() { store.endChat(_active.value); refresh() }
-    fun setModel(path: String) { stop(); runtime?.invalidate(); _selectedModel.value = path; prefs.edit().putString("model", path).apply() }
-    fun setMemoryEnabled(enabled: Boolean) { _memoryEnabled.value = enabled; runtime?.invalidate(); prefs.edit().putBoolean("memory", enabled).apply() }
+    fun setModel(path: String) { housekeeping?.cancel(); stop(); runtime?.invalidate(); _selectedModel.value = path; prefs.edit().putString("model", path).apply() }
+    fun setMemoryEnabled(enabled: Boolean) { housekeeping?.cancel(); _memoryEnabled.value = enabled; runtime?.invalidate(); prefs.edit().putBoolean("memory", enabled).apply() }
     fun setDefaultWeb(enabled: Boolean) { _defaultWeb.value = enabled; prefs.edit().putBoolean("default_web", enabled).apply() }
     fun setDefaultYolo(enabled: Boolean) { _defaultYolo.value = enabled; prefs.edit().putBoolean("default_yolo", enabled).apply() }
     private fun approvalKey(request: ToolRequest): String? = if (request.name == "mcp_call") {
@@ -237,7 +295,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun deleteScheduledTask(id: Long) { ScheduledTaskScheduler.cancel(getApplication(), id); store.deleteScheduledTask(id); refresh() }
     fun editMemory(id: Long, fact: String) { if(fact.isNotBlank()) { store.updateMemory(id, fact.trim()); runtime?.invalidate(); refresh() } }
     fun deleteMemory(id: Long) { store.deleteMemory(id); runtime?.invalidate(); refresh() }
-    fun approveMemory(id: Long) { store.memorySuggestions().firstOrNull { it.id == id }?.let { store.addMemory(it.fact, it.sourceChatId, it.sourceMessageId); store.dismissMemorySuggestion(id); runtime?.invalidate(); refresh() } }
+    fun approveMemory(id: Long) { store.acceptMemorySuggestion(id); runtime?.invalidate(); refresh() }
     fun dismissMemory(id: Long) { store.dismissMemorySuggestion(id); refresh() }
     fun startGoal(goal: String): Boolean {
         if (goal.isBlank() || _busy.value || _benchmarking.value != null || _pending.value != null) return false
@@ -273,6 +331,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun runBenchmark(model: LocalModel) {
         if (_busy.value || _benchmarking.value != null) return
         val assistant = runtime ?: return
+        housekeeping?.cancel()
         viewModelScope.launch {
             _benchmarking.value = model.path
             try {
@@ -289,17 +348,24 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun send(text: String): Boolean {
         if(text.isBlank() || _busy.value || _benchmarking.value != null || _pending.value != null) return false
-        val model = _models.value.firstOrNull { it.path == _selectedModel.value }
+        val mode = ResponsePolicy.resolve(_responseMode.value, text, store.activeAgentTask(_active.value) != null)
+        val path = assignedModel(mode) ?: _selectedModel.value
+        val model = _models.value.firstOrNull { it.path == path } ?: _models.value.firstOrNull { it.path == _selectedModel.value }
         if(model == null) { _status.value = "Select a downloaded model first."; return false }
         val chat = store.chat(_active.value) ?: return false
         val assistant = runtime ?: return false
         val dispatcher = tools ?: return false
-        val messageId = store.addMessage(chat.id, "user", text.trim()); refresh()
+        _resolvedMode.value = mode; _responseModelName.value = model.name
+        housekeeping?.cancel()
+        val submittedAt = android.os.SystemClock.elapsedRealtime()
+        val messageId = store.addMessage(chat.id, "user", text.trim()); if (_memoryEnabled.value) store.queueMemory(messageId); refresh()
         task = viewModelScope.launch {
             _busy.value = true; _live.value = ""
             try {
                 ModelAccess.mutex.withLock {
+                assistant.startMeasurement(model, mode, submittedAt)
                 assistant.use(model, chat, _memoryEnabled.value, _youProfile.value)
+                if (mode == ResponseMode.QUICK && !assistant.thinkingSupported) _status.value = "Quick mode: this model has no native thinking switch."
                 store.activeAgentTask(chat.id)?.takeIf { store.taskEvents(it.id).size == 1 }?.let { goalTask ->
                     try { store.addTaskEvent(goalTask.id, "Plan: ${assistant.planGoal(goalTask.goal)}"); refresh() } catch (_: Exception) { }
                 }
@@ -314,15 +380,12 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
                     store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "waiting", "Waiting for approval: ${request.name}"); store.addTaskEvent(it.id, "Approval needed: ${request.name}"); refresh() }
         } else runTool(chat, request, assistant, dispatcher, text.trim())
                 if (_pending.value == null) {
-                    if (_memoryEnabled.value) try { assistant.extractMemory(text.trim(), chat.id, messageId); refresh() } catch (_: Exception) { }
-                    try { assistant.summarizeOlderChat(chat.id) } catch (_: Exception) { }
-                    maybeTitle(chat.id, assistant)
-                    assistant.invalidate()
+                    maintain(assistant, chat.id)
                 }
                 }
             } catch (_: CancellationException) { _status.value = "Stopped." }
             catch(e: Exception) { store.activeAgentTask(chat.id)?.let { store.updateAgentTask(it.id, "paused", "Error: ${e.message}"); refresh() }; _status.value = e.message ?: "The model could not respond." }
-            finally { _busy.value = false; _live.value = "" }
+            finally { _busy.value = false; _live.value = ""; if (_pending.value != null) { assistant.performance.finish("approval needed"); _performanceSamples.value = assistant.performance.read() } else if (housekeeping?.isActive != true) { assistant.performance.finish("interrupted or failed"); _performanceSamples.value = assistant.performance.read() } }
         }
         return true
     }
@@ -340,22 +403,21 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         task = viewModelScope.launch {
             _busy.value = true
             try { ModelAccess.mutex.withLock {
+                val model = _models.value.firstOrNull { it.name == _responseModelName.value }
+                if(model != null) assistant.startMeasurement(model, _resolvedMode.value ?: ResponseMode.QUICK)
                 runTool(chat, pendingAction.request, assistant, dispatcher, pendingAction.originalUserText, pendingAction.depth, pendingAction.executedCalls, pendingAction.toolResults)
                 if (_pending.value == null) {
-                    if (_memoryEnabled.value) try { assistant.extractMemory(pendingAction.originalUserText, chat.id, store.messages(chat.id).lastOrNull { it.role == "user" }?.id ?: 0); refresh() } catch (_: Exception) { }
-                    try { assistant.summarizeOlderChat(chat.id) } catch (_: Exception) { }
-                    maybeTitle(chat.id, assistant)
-                    assistant.invalidate()
+                    maintain(assistant, chat.id)
                 }
             } }
             catch(e: Exception) { _status.value = e.message ?: "Action failed." }
-            finally { _busy.value = false; _live.value = "" }
+            finally { _busy.value = false; _live.value = ""; if (_pending.value != null) { assistant.performance.finish("approval needed"); _performanceSamples.value = assistant.performance.read() } else if (housekeeping?.isActive != true) { assistant.performance.finish("interrupted or failed"); _performanceSamples.value = assistant.performance.read() } }
         }
     }
     fun reject() { _pending.value = null; store.activeAgentTask(_active.value)?.let { store.updateAgentTask(it.id, "paused", "Action cancelled"); store.addTaskEvent(it.id, "Action cancelled") }; store.addMessage(_active.value, "assistant", "Action cancelled."); refresh() }
     private suspend fun runTool(chat: Chat, request: ToolRequest, assistant: AssistantRuntime, dispatcher: AssistantTools, originalUserText: String, depth: Int = 0,
                                 executedCalls: List<String> = emptyList(), toolResults: List<String> = emptyList()) {
-        val limit = if (store.activeAgentTask(chat.id) != null) 8 else 3
+        val limit = if (store.activeAgentTask(chat.id) != null || assistant.mode == ResponseMode.DEEP) 8 else 3
         val key = dispatcher.callKey(request)
         val blocked = ToolTurnPolicy.blockReason(key, dispatcher.needsConfirmation(request), executedCalls, limit)
         if (blocked != null) {
@@ -363,8 +425,10 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         _live.value = ""
+        val toolStarted = android.os.SystemClock.elapsedRealtime()
         val result = try { dispatcher.execute(chat, request) } catch (e: CancellationException) { throw e }
             catch(e: Exception) { "Tool error: ${e.message}".also { store.log(chat.id, "${dispatcher.describe(request)} -> $it") } }
+        assistant.performance.addDuration("tool_duration_ms", android.os.SystemClock.elapsedRealtime() - toolStarted)
         _skills.value = skillStore.read()
         val calls = executedCalls + key
         val results = toolResults + "${request.name}: ${result.take(1200)}"
@@ -424,7 +488,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             if (title.isNotBlank() && !title.contains("[tool]")) { store.setChatTitle(chatId, title); refresh() }
         } catch (_: Exception) { assistant.invalidate() }
     }
-    fun stop() { task?.cancel(); task = null; store.activeAgentTask(_active.value)?.let { store.updateAgentTask(it.id, "paused", "Stopped by user") }; _busy.value = false; _pending.value = null; _live.value = ""; refresh() }
+    fun stop() { housekeeping?.cancel(); task?.cancel(); task = null; store.activeAgentTask(_active.value)?.let { store.updateAgentTask(it.id, "paused", "Stopped by user") }; _busy.value = false; _pending.value = null; _live.value = ""; refresh() }
 
     fun import(uri: Uri) { viewModelScope.launch { try { val model = library.import(uri); refresh(); setModel(model.path); _status.value = "Model imported." } catch(e: Exception) { _status.value = e.message ?: "Import failed." } } }
     fun searchRepos(query: String) { viewModelScope.launch { try { _repoResults.value = library.search(query) } catch(e: Exception) { _status.value = e.message ?: "Search failed." } } }

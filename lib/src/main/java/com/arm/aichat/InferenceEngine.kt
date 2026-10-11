@@ -25,8 +25,16 @@ interface InferenceEngine {
      */
     suspend fun setSystemPrompt(systemPrompt: String)
 
+    /** Clears conversation state without unloading the model weights. */
+    suspend fun resetSystemPrompt(systemPrompt: String)
+    val lastPromptProcessingMillis: Long
+
     /** Count text tokens using the loaded model, without changing its conversation. */
     suspend fun countTokens(text: String): Int
+    suspend fun contextCapacity(): Int
+
+    /** Returns false when the model template cannot control thinking. */
+    suspend fun setThinking(enabled: Boolean): Boolean
 
     /**
      * Sends a user prompt to the loaded model and returns a Flow of generated tokens.

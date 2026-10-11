@@ -68,6 +68,10 @@ On Windows, you can encode the keystore with `[Convert]::ToBase64String([IO.File
 
 Long-press the Android home screen, open **Widgets**, and find **Cina**. **Quick Note** opens a focused editor and saves the text directly to Notes; its first line becomes the title. **Ask Cina** opens a prompt field and sends the text in a new chat when you press Send. If no model is selected, the prompt stays in the new chat's input field so you can choose a model first. **Today** shows the next two open reminders and the latest scheduled task result. Tap the reminder area to open **Tasks → Reminders**, or the task result to open **Tasks → Scheduled**.
 
+## Local response modes and timing
+
+Auto is the default, with Quick and Deep overrides in chat. Assign local models for each mode in Settings, or use the same model for both. Quick disables thinking when the model template supports that control. Settings → Response timings shows local measurements for the last 30 runs without recording message content. See [response modes, memory processing, and the Fold 7 validation protocol](docs/local-response-performance.md).
+
 ## Goals, files, memory, and model benchmarks
 
 - Type a request in chat, tap **+**, and choose **Track as goal** to track it in **Tasks → Goals**. Cina saves tool results and approval checkpoints with the goal. You can return to a paused or waiting goal, follow up, or mark it complete. Goal execution runs while the chat is active; closing the app preserves progress but does not keep that goal running in the background. Scheduled tasks remain a separate feature.
@@ -81,9 +85,9 @@ Open **Settings → Skills** to enable, disable, or edit procedures for Remember
 
 Ask Cina to create a skill for a recurring workflow. It drafts a title, a description explaining when to use it, and instructions with steps and a completion check, then requests `create_skill`. The existing approval dialog shows all instructions before saving (unless you already allow that tool or use YOLO mode). Custom skills are enabled after saving and can be edited, toggled, or deleted in Settings. Up to eight custom skills are stored locally. Instructions are limited to 1,200 characters per skill. Repeating an identical creation does not add a duplicate; conflicting titles require editing the existing skill.
 
-Enabled procedures are included together in interactive and scheduled prompts. Cina is instructed to use only procedures that match the request. Skills do not grant permissions, enable web search, install external skills, execute scripts, or add capabilities. A larger enabled collection increases prompt size, and guidance still depends on the local model. Scheduled tasks cannot create skills or save memories. Memory maintenance reads saved facts with `search_memories` and suggests changes for review in You → Memory.
+Interactive prompts include a compact procedure catalog and up to two matching procedures. Cina can load another enabled procedure with find_skill when needed. Skills do not grant permissions, enable web search, install external skills, execute scripts, or add capabilities. A larger enabled collection increases prompt size, and guidance still depends on the local model. Scheduled tasks cannot create skills or save memories. Memory maintenance reads saved facts with `search_memories` and suggests changes for review in You → Memory.
 
-When explicitly asked to remember a fact, Cina can request `save_memory`. Its approval shows the exact fact before saving, unless already allowed or using YOLO mode. Saved facts appear in **You → Memory** with a source conversation and can inform future chats. Exact duplicates are skipped. Memory tools are unavailable while memory is off. Incidental facts still use the existing suggestion review.
+When explicitly asked to remember a fact, Cina can request `save_memory`. Its approval shows the exact fact before saving, unless already allowed or using YOLO mode. Saved facts appear in **You → Memory** with a source conversation and can inform future chats. Exact duplicates are skipped. Memory tools are unavailable while memory is off. Ordinary incidental facts with supporting evidence save automatically with Undo; sensitive, uncertain, and conflicting facts are proposed for review. Temporary plans retain their source date and expire from active memory retrieval.
 
 ## Skill device checks
 

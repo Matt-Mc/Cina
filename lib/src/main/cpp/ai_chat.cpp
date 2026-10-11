@@ -38,6 +38,31 @@ static llama_context                    * g_context;
 static llama_batch                        g_batch;
 static common_chat_templates_ptr          g_chat_templates;
 static common_sampler                   * g_sampler;
+static bool g_enable_thinking = true;
+static bool g_thinking_supported = false;
+static bool g_return_thinking_prefix = false;
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_arm_aichat_internal_InferenceEngineImpl_configureThinking(JNIEnv *, jobject, jboolean enabled) {
+    g_thinking_supported = false;
+    try {
+        if (g_chat_templates && common_chat_templates_support_enable_thinking(g_chat_templates.get())) {
+            common_chat_templates_inputs probe;
+            common_chat_msg message;
+            message.role = "user"; message.content = "Hello";
+            probe.messages.push_back(message);
+            probe.enable_thinking = true;
+            const auto thinking_prompt = common_chat_templates_apply(g_chat_templates.get(), probe).prompt;
+            probe.enable_thinking = false;
+            g_thinking_supported = thinking_prompt != common_chat_templates_apply(g_chat_templates.get(), probe).prompt;
+        }
+    } catch (const std::exception &) {
+        LOGw("Thinking control is unavailable for this template");
+    }
+    g_enable_thinking = enabled;
+    return g_thinking_supported;
+}
 
 extern "C"
 JNIEXPORT void JNICALL
@@ -84,6 +109,12 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_tokenizeCount(JNIEnv *env, jobj
     return static_cast<jint>(tokens.size());
 }
 
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_arm_aichat_internal_InferenceEngineImpl_nativeContextCapacity(JNIEnv *, jobject) {
+    return g_context ? static_cast<jint>(llama_n_ctx(g_context)) : 0;
+}
+
 static llama_context *init_context(llama_model *model, const int n_ctx = DEFAULT_CONTEXT_SIZE) {
     if (!model) {
         LOGe("%s: model cannot be null", __func__);
@@ -103,7 +134,7 @@ static llama_context *init_context(llama_model *model, const int n_ctx = DEFAULT
         LOGw("%s: Model was trained with only %d context size! Enforcing %d context size...",
              __func__, trained_context_size, n_ctx);
     }
-    ctx_params.n_ctx = n_ctx;
+    ctx_params.n_ctx = trained_context_size > 0 ? std::min(n_ctx, trained_context_size) : n_ctx;
     ctx_params.n_batch = BATCH_SIZE;
     ctx_params.n_ubatch = BATCH_SIZE;
     ctx_params.n_threads = n_threads;
@@ -129,6 +160,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_prepare(JNIEnv * /*env*/, jobje
     g_context = context;
     g_batch = llama_batch_init(BATCH_SIZE, 0, 1);
     g_chat_templates = common_chat_templates_init(g_model, "");
+    g_thinking_supported = false;
+    g_enable_thinking = true;
     g_sampler = new_sampler(DEFAULT_SAMPLER_TEMP);
     return 0;
 }
@@ -301,8 +334,22 @@ static std::string chat_add_and_format(const std::string &role, const std::strin
     common_chat_msg new_msg;
     new_msg.role = role;
     new_msg.content = content;
-    auto formatted = common_chat_format_single(
-            g_chat_templates.get(), chat_msgs, new_msg, role == ROLE_USER, /* use_jinja */ false);
+    std::string formatted;
+    if (g_thinking_supported) {
+        common_chat_templates_inputs inputs;
+        inputs.enable_thinking = g_enable_thinking;
+        inputs.messages = chat_msgs;
+        inputs.add_generation_prompt = false;
+        const auto past = chat_msgs.empty() ? std::string() : common_chat_templates_apply(g_chat_templates.get(), inputs).prompt;
+        inputs.messages.push_back(new_msg);
+        inputs.add_generation_prompt = role == ROLE_USER;
+        const auto next = common_chat_templates_apply(g_chat_templates.get(), inputs).prompt;
+        if (next.size() < past.size()) throw std::runtime_error("Chat template prefix changed");
+        formatted = (role == ROLE_USER && !past.empty() && past.back() == '\n' ? "\n" : "") + next.substr(past.size());
+    } else {
+        formatted = common_chat_format_single(
+                g_chat_templates.get(), chat_msgs, new_msg, role == ROLE_USER, /* use_jinja */ false);
+    }
     chat_msgs.push_back(new_msg);
     LOGi("%s: Formatted and added %s message: \n%s\n", __func__, role.c_str(), formatted.c_str());
     return formatted;
@@ -432,6 +479,11 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
         formatted_user_prompt = chat_add_and_format(ROLE_USER, user_prompt);
     }
     env->ReleaseStringUTFChars(juser_prompt, user_prompt);
+    const auto opening_think = formatted_user_prompt.rfind("<think>");
+    const auto closing_think = formatted_user_prompt.rfind("</think>");
+    g_return_thinking_prefix = has_chat_template && opening_think != std::string::npos &&
+        formatted_user_prompt.find_first_not_of(" \t\r\n", opening_think + 7) == std::string::npos &&
+        (closing_think == std::string::npos || closing_think < opening_think);
 
     // Decode formatted user prompts
     auto user_tokens = common_tokenize(g_context, formatted_user_prompt, has_chat_template, has_chat_template);
@@ -441,12 +493,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
 
     // Ensure user prompt doesn't exceed the context size by truncating if necessary.
     const int user_prompt_size = (int) user_tokens.size();
-    const int max_batch_size = DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM;
-    if (user_prompt_size > max_batch_size) {
-        const int skipped_tokens = user_prompt_size - max_batch_size;
-        user_tokens.resize(max_batch_size);
-        LOGw("%s: User prompt too long! Skipped %d tokens!", __func__, skipped_tokens);
-    }
+    const int max_batch_size = static_cast<int>(llama_n_ctx(g_context)) - OVERFLOW_HEADROOM;
+    if (user_prompt_size + current_position >= max_batch_size) return 3;
 
     // Decode user tokens in batches
     if (decode_tokens_in_batches(g_context, g_batch, user_tokens, current_position, true)) {
@@ -456,7 +504,7 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
 
     // Update position
     current_position += user_prompt_size;
-    stop_generation_position = current_position + user_prompt_size + n_predict;
+    stop_generation_position = current_position + n_predict;
     return 0;
 }
 
@@ -501,7 +549,7 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
         jobject /*unused*/
 ) {
     // Infinite text generation via context shifting
-    if (current_position >= DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM) {
+    if (current_position >= static_cast<int>(llama_n_ctx(g_context)) - OVERFLOW_HEADROOM) {
         LOGw("%s: Context full! Shifting...", __func__);
         shift_context();
     }
@@ -541,6 +589,10 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
     // Create and return a valid UTF-8 Java string
     jstring result = nullptr;
     if (is_valid_utf8(cached_token_chars.c_str())) {
+        if (g_return_thinking_prefix) {
+            cached_token_chars.insert(0, "<think>");
+            g_return_thinking_prefix = false;
+        }
         result = env->NewStringUTF(cached_token_chars.c_str());
         LOGv("id: %d,\tcached: `%s`,\tnew: `%s`", new_token_id, cached_token_chars.c_str(), new_token_chars.c_str());
 
