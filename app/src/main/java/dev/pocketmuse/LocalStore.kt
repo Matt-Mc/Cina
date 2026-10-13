@@ -4,8 +4,10 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.content.ContentValues
+import org.json.JSONArray
+import org.json.JSONObject
 
-class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 6) {
+class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 7) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE chats(id INTEGER PRIMARY KEY, title TEXT NOT NULL, web INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL, time INTEGER NOT NULL)")
@@ -18,6 +20,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         createAgentTables(db)
         createChatSummaries(db)
         createMemoryProcessing(db)
+        createUsabilityTables(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createScheduledTasks(db)
@@ -25,7 +28,80 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         if (oldVersion < 4) createChatSummaries(db)
         if (oldVersion < 5) db.execSQL("ALTER TABLE reminders ADD COLUMN notified_ms INTEGER")
         if (oldVersion < 6) createMemoryProcessing(db)
+        if (oldVersion < 7) createUsabilityTables(db)
     }
+    private fun createUsabilityTables(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE notes ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE scheduled_tasks ADD COLUMN running INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("CREATE TABLE turns(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, request TEXT NOT NULL, model_path TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', pending TEXT, scope TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 1)")
+        db.execSQL("CREATE TABLE tool_receipts(scope TEXT NOT NULL, call_key TEXT NOT NULL, result TEXT, PRIMARY KEY(scope,call_key))")
+        db.execSQL("CREATE TABLE note_reads(scope TEXT NOT NULL, note_id INTEGER NOT NULL, version INTEGER NOT NULL, through_char INTEGER NOT NULL, PRIMARY KEY(scope,note_id))")
+    }
+
+    @Synchronized fun recoverInterruptedTurns() {
+        writableDatabase.execSQL("UPDATE turns SET status='interrupted', error='The app closed before this response finished. You can retry safely.' WHERE status='running'")
+    }
+    @Synchronized fun saveTurn(id: Long, chatId: Long, request: String, modelPath: String, mode: String) {
+        val inserted = writableDatabase.insertWithOnConflict("turns", null, ContentValues().apply {
+            put("id", id); put("chat_id", chatId); put("request", request); put("model_path", modelPath); put("mode", mode); put("status", "running")
+            put("scope", activeAgentTask(chatId)?.let { "goal:${it.id}" } ?: "turn:$id")
+        }, SQLiteDatabase.CONFLICT_IGNORE)
+        if (inserted == -1L) writableDatabase.execSQL("UPDATE turns SET attempts=attempts+1 WHERE id=?", arrayOf(id))
+        writableDatabase.update("turns", ContentValues().apply { put("request", request); put("model_path", modelPath); put("mode", mode) }, "id=?", arrayOf(id.toString()))
+        writableDatabase.update("messages", ContentValues().apply { put("body", request) }, "id=? AND role='user'", arrayOf(id.toString()))
+        updateTurn(id, "running")
+    }
+    @Synchronized fun updateTurn(id: Long, status: String, error: String = "", pending: PendingAction? = null) {
+        val payload = pending?.let { JSONObject().put("name", it.request.name).put("arguments", it.request.arguments)
+            .put("request", it.originalUserText).put("depth", it.depth).put("calls", JSONArray(it.executedCalls)).put("results", JSONArray(it.toolResults)).toString() }
+        writableDatabase.update("turns", ContentValues().apply { put("status", status); put("error", error); put("pending", payload) }, "id=?", arrayOf(id.toString()))
+    }
+    @Synchronized fun turns(chatId: Long): List<TurnRecord> = buildList {
+        readableDatabase.rawQuery("SELECT id,chat_id,request,model_path,mode,status,error,pending,scope,attempts FROM turns WHERE chat_id=? ORDER BY id", arrayOf(chatId.toString())).use { c ->
+            while (c.moveToNext()) {
+                val pending = if (c.isNull(7)) null else runCatching {
+                    val j = JSONObject(c.getString(7))
+                    fun strings(key: String): List<String> = j.getJSONArray(key).let { a -> (0 until a.length()).map { a.getString(it) } }
+                    PendingAction(ToolRequest(j.getString("name"), j.getJSONObject("arguments")), j.getString("request"), j.getInt("depth"), strings("calls"), strings("results"))
+                }.getOrNull()
+                add(TurnRecord(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getString(5), c.getString(6), pending, c.getString(8), c.getInt(9)))
+            }
+        }
+    }
+    @Synchronized fun executionScope(chatId: Long, turnId: Long): String = turns(chatId).firstOrNull { it.id == turnId }?.scope ?: "turn:$turnId"
+    @Synchronized fun toolReceipt(scope: String, key: String): String? = readableDatabase.rawQuery("SELECT result FROM tool_receipts WHERE scope=? AND call_key=?", arrayOf(scope, key)).use { c ->
+        if (!c.moveToFirst()) null else if (!c.isNull(0)) c.getString(0) else JSONObject().put("status", "uncertain").put("message", "This action may already have run. Check the saved item or connected service before requesting it again.").toString()
+    }
+    @Synchronized fun hasToolHistory(scope: String): Boolean = readableDatabase.rawQuery("SELECT 1 FROM tool_receipts WHERE scope=? LIMIT 1", arrayOf(scope)).use { it.moveToFirst() }
+    /** null means new; an existing pending receipt means the previous outcome is uncertain. Never replay it. */
+    @Synchronized fun beginTool(scope: String, key: String): String? {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.rawQuery("SELECT result FROM tool_receipts WHERE scope=? AND call_key=?", arrayOf(scope, key)).use { c ->
+                if (c.moveToFirst()) return if (c.isNull(0)) JSONObject().put("status", "uncertain").put("message", "This action may already have run before interruption. Check the saved item or connected service before requesting it again.").toString() else c.getString(0)
+            }
+            db.insertOrThrow("tool_receipts", null, ContentValues().apply { put("scope", scope); put("call_key", key) })
+            db.setTransactionSuccessful()
+            return null
+        } finally { db.endTransaction() }
+    }
+    @Synchronized fun finishTool(scope: String, key: String, result: String) {
+        writableDatabase.update("tool_receipts", ContentValues().apply { put("result", result) }, "scope=? AND call_key=?", arrayOf(scope, key))
+    }
+    @Synchronized fun toolHistory(scope: String): List<String> = buildList {
+        readableDatabase.rawQuery("SELECT call_key,result FROM tool_receipts WHERE scope=? ORDER BY rowid", arrayOf(scope)).use { c ->
+            while(c.moveToNext()) add("${c.getString(0).substringBefore(':')}: ${if(c.isNull(1)) "Outcome uncertain; do not repeat." else c.getString(1)}")
+        }
+    }
+    @Synchronized fun recordNoteRead(scope: String, note: Note, start: Int, end: Int) {
+        val previous = readableDatabase.rawQuery("SELECT version,through_char FROM note_reads WHERE scope=? AND note_id=?", arrayOf(scope, note.id.toString())).use { c -> if(c.moveToFirst() && c.getLong(0) == note.version) c.getInt(1) else 0 }
+        if (start <= previous) writableDatabase.insertWithOnConflict("note_reads", null, ContentValues().apply {
+            put("scope", scope); put("note_id", note.id); put("version", note.version); put("through_char", maxOf(previous, end))
+        }, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+    @Synchronized fun noteReadFully(scope: String, note: Note): Boolean = readableDatabase.rawQuery("SELECT through_char FROM note_reads WHERE scope=? AND note_id=? AND version=?", arrayOf(scope, note.id.toString(), note.version.toString())).use { c -> c.moveToFirst() && c.getInt(0) >= note.body.length }
     private fun createMemoryProcessing(db: SQLiteDatabase) {
         db.execSQL("ALTER TABLE memories ADD COLUMN kind TEXT NOT NULL DEFAULT 'durable'")
         db.execSQL("ALTER TABLE memories ADD COLUMN expires_ms INTEGER")
@@ -88,9 +164,50 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         writableDatabase.update("chats", ContentValues().apply { put("title", title) }, "id=? AND title='New chat'", arrayOf(id.toString()))
     }
     @Synchronized fun chats(): List<Chat> = buildList {
-        readableDatabase.rawQuery("SELECT id,title,web,yolo FROM chats ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Chat(c.getLong(0), c.getString(1), c.getInt(2) != 0, c.getInt(3) != 0)) }
+        readableDatabase.rawQuery("SELECT id,title,web,yolo,archived FROM chats ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Chat(c.getLong(0), c.getString(1), c.getInt(2) != 0, c.getInt(3) != 0, c.getInt(4) != 0)) }
     }
     @Synchronized fun chat(id: Long) = chats().firstOrNull { it.id == id }
+    @Synchronized fun renameChat(id: Long, title: String) {
+        require(title.isNotBlank())
+        writableDatabase.update("chats", ContentValues().apply { put("title", title.trim().take(100)) }, "id=?", arrayOf(id.toString()))
+    }
+    @Synchronized fun archiveChat(id: Long, archived: Boolean) { writableDatabase.update("chats", ContentValues().apply { put("archived", if(archived) 1 else 0) }, "id=?", arrayOf(id.toString())) }
+    @Synchronized fun deleteChat(id: Long, deleteSavedMemories: Boolean) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            attachments(id).forEach { removeAttachment(it.id) }
+            agentTasks().filter { it.chatId == id }.forEach {
+                db.delete("task_events", "task_id=?", arrayOf(it.id.toString()))
+                db.delete("tool_receipts", "scope=?", arrayOf("goal:${it.id}"))
+                db.delete("note_reads", "scope=?", arrayOf("goal:${it.id}"))
+            }
+            turns(id).forEach {
+                db.delete("tool_receipts", "scope=?", arrayOf("turn:${it.id}"))
+                db.delete("note_reads", "scope=?", arrayOf("turn:${it.id}"))
+            }
+            db.execSQL("DELETE FROM memory_jobs WHERE message_id IN (SELECT id FROM messages WHERE chat_id=?)", arrayOf(id))
+            if (deleteSavedMemories) db.delete("memories", "source_chat_id=?", arrayOf(id.toString()))
+            else db.execSQL("UPDATE memories SET source_chat_id=NULL,source_message_id=NULL WHERE source_chat_id=?", arrayOf(id))
+            listOf("messages", "actions", "agent_tasks", "chat_summaries", "turns").forEach { db.delete(it, "chat_id=?", arrayOf(id.toString())) }
+            db.delete("memory_suggestions", "source_chat_id=?", arrayOf(id.toString()))
+            db.delete("chats", "id=?", arrayOf(id.toString()))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+    @Synchronized fun removeAttachment(id: Long) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM chat_summaries WHERE chat_id IN (SELECT chat_id FROM attachments WHERE id=?)", arrayOf(id))
+            db.delete("attachment_chunks", "attachment_id=?", arrayOf(id.toString()))
+            db.delete("attachments", "id=?", arrayOf(id.toString()))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+    @Synchronized fun attachmentText(id: Long): String = buildList<String> {
+        readableDatabase.rawQuery("SELECT body FROM attachment_chunks WHERE attachment_id=? ORDER BY chunk_index", arrayOf(id.toString())).use { c -> while(c.moveToNext()) add(c.getString(0)) }
+    }.joinToString("\n\n")
     @Synchronized fun setChatFlag(id: Long, flag: String, enabled: Boolean) {
         require(flag == "web" || flag == "yolo")
         writableDatabase.update("chats", ContentValues().apply { put(flag, if(enabled) 1 else 0) }, "id=?", arrayOf(id.toString()))
@@ -104,9 +221,18 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         readableDatabase.rawQuery("SELECT id,chat_id,role,body,time FROM messages WHERE chat_id=? ORDER BY id", arrayOf(chatId.toString())).use { c -> while(c.moveToNext()) add(Message(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getLong(4))) }
     }
     @Synchronized fun addNote(title: String, body: String): Long = writableDatabase.insertOrThrow("notes", null, ContentValues().apply { put("title", title); put("body", body) })
-    @Synchronized fun notes(): List<Note> = buildList { readableDatabase.rawQuery("SELECT id,title,body FROM notes ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Note(c.getLong(0), c.getString(1), c.getString(2))) } }
+    @Synchronized fun notes(): List<Note> = buildList { readableDatabase.rawQuery("SELECT id,title,body,version FROM notes ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Note(c.getLong(0), c.getString(1), c.getString(2), c.getLong(3))) } }
     @Synchronized fun deleteNote(id: Long) { writableDatabase.delete("notes", "id=?", arrayOf(id.toString())) }
-    @Synchronized fun updateNote(id: Long, title: String, body: String) { writableDatabase.update("notes", ContentValues().apply { put("title", title); put("body", body) }, "id=?", arrayOf(id.toString())) }
+    @Synchronized fun updateNote(id: Long, title: String, body: String) { writableDatabase.execSQL("UPDATE notes SET title=?,body=?,version=version+1 WHERE id=?", arrayOf<Any>(title, body, id)) }
+    @Synchronized fun patchNote(id: Long, version: Long, title: String?, body: String?, append: String?) {
+        val note = notes().firstOrNull { it.id == id } ?: error("Note not found.")
+        require(note.version == version) { "This note changed. Read it again before editing." }
+        require(body == null || append == null) { "Choose body or append, not both." }
+        require(title != null || body != null || append != null) { "Specify what to change." }
+        val nextBody = body ?: if (append == null) note.body else note.body + append
+        val updated = writableDatabase.update("notes", ContentValues().apply { put("title", title ?: note.title); put("body", nextBody); put("version", version + 1) }, "id=? AND version=?", arrayOf(id.toString(), version.toString()))
+        require(updated == 1) { "This note changed. Read it again." }
+    }
     @Synchronized fun addReminder(title: String, whenMillis: Long): Long = writableDatabase.insertOrThrow("reminders", null, ContentValues().apply { put("title", title); put("when_ms", whenMillis); put("done", 0) })
     @Synchronized fun reminders(): List<Reminder> = buildList { readableDatabase.rawQuery("SELECT id,title,when_ms,done,notified_ms FROM reminders ORDER BY when_ms", null).use { c -> while(c.moveToNext()) add(Reminder(c.getLong(0), c.getString(1), c.getLong(2), c.getInt(3) != 0, if(c.isNull(4)) null else c.getLong(4))) } }
     @Synchronized fun claimReminderNotification(id: Long): Boolean = writableDatabase.update("reminders",
@@ -125,13 +251,19 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
             put("repeat_rule", repeat); put("enabled", 1)
         })
     @Synchronized fun scheduledTasks(): List<ScheduledTask> = buildList {
-        readableDatabase.rawQuery("SELECT id,title,prompt,model_path,next_run_ms,repeat_rule,enabled,last_run_ms,last_result,last_error FROM scheduled_tasks ORDER BY next_run_ms", null).use { c ->
+        readableDatabase.rawQuery("SELECT id,title,prompt,model_path,next_run_ms,repeat_rule,enabled,last_run_ms,last_result,last_error,running FROM scheduled_tasks ORDER BY next_run_ms", null).use { c ->
             while (c.moveToNext()) add(ScheduledTask(c.getLong(0), c.getString(1), c.getString(2), c.getString(3),
                 c.getLong(4), c.getString(5), c.getInt(6) != 0, if(c.isNull(7)) null else c.getLong(7),
-                if(c.isNull(8)) null else c.getString(8), if(c.isNull(9)) null else c.getString(9)))
+                if(c.isNull(8)) null else c.getString(8), if(c.isNull(9)) null else c.getString(9), c.getInt(10) != 0))
         }
     }
     @Synchronized fun scheduledTask(id: Long): ScheduledTask? = scheduledTasks().firstOrNull { it.id == id }
+    @Synchronized fun editScheduledTask(id: Long, title: String, prompt: String, model: String, time: Long, repeat: String) {
+        writableDatabase.update("scheduled_tasks", ContentValues().apply {
+            put("title", title); put("prompt", prompt); put("model_path", model); put("next_run_ms", time); put("repeat_rule", repeat); put("enabled", 1); put("running", 0)
+        }, "id=?", arrayOf(id.toString()))
+    }
+    @Synchronized fun setScheduledRunning(id: Long, scheduledFor: Long, running: Boolean) { writableDatabase.update("scheduled_tasks", ContentValues().apply { put("running", if(running) 1 else 0) }, "id=? AND next_run_ms=?", arrayOf(id.toString(), scheduledFor.toString())) }
     @Synchronized fun setScheduledTaskEnabled(id: Long, enabled: Boolean, nextRunMillis: Long? = null) {
         writableDatabase.update("scheduled_tasks", ContentValues().apply {
             put("enabled", if(enabled) 1 else 0)
@@ -139,11 +271,11 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         }, "id=?", arrayOf(id.toString()))
     }
     @Synchronized fun deleteScheduledTask(id: Long) { writableDatabase.delete("scheduled_tasks", "id=?", arrayOf(id.toString())) }
-    @Synchronized fun finishScheduledTask(id: Long, runMillis: Long, result: String?, error: String?, nextMillis: Long?) {
+    @Synchronized fun finishScheduledTask(id: Long, runMillis: Long, result: String?, error: String?, nextMillis: Long?, manual: Boolean = false, executionTime: Long = runMillis) {
         writableDatabase.update("scheduled_tasks", ContentValues().apply {
-            put("last_run_ms", System.currentTimeMillis()); put("last_result", result); put("last_error", error)
-            if (nextMillis == null) put("enabled", 0) else put("next_run_ms", nextMillis)
-        }, "id=? AND next_run_ms=? AND enabled=1", arrayOf(id.toString(), runMillis.toString()))
+            put("last_run_ms", executionTime); put("last_result", result); put("last_error", error); put("running", 0)
+            if (!manual) { if (nextMillis == null) put("enabled", 0) else put("next_run_ms", nextMillis) }
+        }, "id=? AND next_run_ms=?", arrayOf(id.toString(), runMillis.toString()))
     }
     @Synchronized fun addMemory(fact: String, chatId: Long? = null, messageId: Long? = null) { writableDatabase.insertWithOnConflict("memories", null, ContentValues().apply { put("fact", fact); put("source_chat_id", chatId); put("source_message_id", messageId) }, SQLiteDatabase.CONFLICT_IGNORE) }
     @Synchronized fun memories(): List<Memory> = buildList { readableDatabase.rawQuery("SELECT id,fact,source_chat_id,source_message_id,kind,expires_ms FROM memories ORDER BY id DESC", null).use { c -> while(c.moveToNext()) add(Memory(c.getLong(0), c.getString(1), if(c.isNull(2)) null else c.getLong(2), if(c.isNull(3)) null else c.getLong(3), c.getString(4), if(c.isNull(5)) null else c.getLong(5))) } }

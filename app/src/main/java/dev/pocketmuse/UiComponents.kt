@@ -18,10 +18,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Calendar
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 internal val Paper = Color(0xFFFAF9F6)
 internal val Ink = Color(0xFF26312C)
-internal val Muted = Color(0xFF767E78)
+internal val Muted = Color(0xFF58665E)
 internal val Line = Color(0xFFE7E9E2)
 internal val Soft = Color(0xFFF0F2EC)
 internal val Accent = Color(0xFF4F7562)
@@ -71,7 +73,7 @@ internal fun SettingToggle(title: String, detail: String, checked: Boolean, onCh
             Text(title, color = Ink, fontWeight = FontWeight.Medium)
             Text(detail, color = Muted, fontSize = 12.sp)
         }
-        Switch(checked, onCheckedChange = onChange)
+        Switch(checked, onCheckedChange = onChange, modifier = Modifier.semantics { contentDescription = title })
     }
 }
 
@@ -104,45 +106,4 @@ internal fun chooseDateTime(activity: ComponentActivity, initial: Long = System.
             onChosen(Calendar.getInstance().apply { set(year, month, day, hour, minute, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis)
         }, calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE), android.text.format.DateFormat.is24HourFormat(activity)).show()
     }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
-}
-
-@Composable
-internal fun ActionApprovalDialog(action: PendingAction, onReject: () -> Unit, onApprove: () -> Unit, onAlwaysAllow: () -> Unit) {
-    var details by remember { mutableStateOf(false) }
-    val request = action.request
-    val title = when (request.name) {
-        "create_skill" -> "Save this skill?"
-        "save_memory" -> "Remember this detail?"
-        "create_note" -> "Save this note?"
-        "edit_note" -> "Update this note?"
-        "delete_note" -> "Delete this note?"
-        "create_reminder" -> "Set this reminder?"
-        "complete_reminder" -> "Complete this reminder?"
-        "reschedule_reminder" -> "Reschedule this reminder?"
-        "create_scheduled_task" -> "Schedule this prompt?"
-        "create_calendar_event" -> "Open this calendar event?"
-        "set_alarm" -> "Set this alarm?"
-        "share_text" -> "Share this text?"
-        "mcp_call" -> "Run this connected action?"
-        else -> "Let Cina do this?"
-    }
-    val arguments = request.arguments
-    AlertDialog(onDismissRequest = onReject, containerColor = Paper, title = { Text(title) },
-        text = { Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (request.name == "mcp_call") {
-                Text("${arguments.optString("server")} · ${arguments.optString("tool").replace('_', ' ')}", color = Ink)
-                Text("This service will receive the action's arguments.", color = Muted, fontSize = 12.sp)
-            }
-            val readable = listOf("description", "instructions", "fact", "title", "body", "prompt", "text", "when_iso", "start_iso", "end_iso", "repeat", "message", "hour", "minute", "id")
-                .mapNotNull { key -> arguments.optString(key).takeIf { it.isNotBlank() }?.let { key to it } }
-            readable.forEach { (key, value) ->
-                Text(when (key) { "when_iso" -> "When"; "start_iso" -> "Starts"; "end_iso" -> "Ends"; "id" -> "Item ID"; else -> key.replaceFirstChar { it.uppercase() } }, color = Muted, fontSize = 11.sp)
-                Text(value.take(if (key == "instructions") AssistantSkills.MAX_INSTRUCTIONS else 800), color = Ink, fontSize = 14.sp)
-            }
-            TextButton(onClick = { details = !details }) { Text(if (details) "Hide details" else "View action details") }
-            if (details) Text("${request.name}\n${arguments.toString(2)}", color = Muted, fontSize = 12.sp)
-            TextButton(onClick = onAlwaysAllow) { Text("Always allow this tool", fontSize = 12.sp) }
-        } },
-        confirmButton = { TextButton(onClick = onApprove) { Text("Allow once") } },
-        dismissButton = { TextButton(onClick = onReject) { Text("Not now") } })
 }

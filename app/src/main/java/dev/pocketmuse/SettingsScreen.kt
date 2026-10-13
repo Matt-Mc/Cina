@@ -24,7 +24,7 @@ internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit
     val connections by vm.connections.collectAsState()
     val profile by vm.youProfile.collectAsState()
     Page("Settings", "A few choices to make Cina yours.") {
-        ResponseSettings(vm)
+        NavigationRow("Responses", "Speed, model choices & response timings") { onNavigate("Response settings") }
         NavigationRow("Models", "${models.size} installed · downloads & access", { onNavigate("Models") })
         NavigationRow("Skills", "${skills.count { it.enabled }} enabled · familiar tasks & instructions", { onNavigate("Skills") })
         NavigationRow("Connections", "${connections.count { it.connected }} connected · services & tools", { onNavigate("Connections") })
@@ -111,13 +111,19 @@ internal fun AboutScreen(updateStatus: String, onCheckUpdates: () -> Unit) {
 internal fun ConnectionsScreen(vm: AssistantViewModel) {
     val activity = checkNotNull(LocalActivity.current) as ComponentActivity
     val connections by vm.connections.collectAsState()
-    var expandedConnection by remember { mutableStateOf<String?>(null) }
+    var expandedConnection by rememberSaveable { mutableStateOf<String?>(null) }
     var mcpToken by remember { mutableStateOf("") }
     var customName by rememberSaveable { mutableStateOf("") }
     var customUrl by rememberSaveable { mutableStateOf("") }
     var customToken by remember { mutableStateOf("") }
     var showAvailable by rememberSaveable { mutableStateOf(false) }
     var showCustom by rememberSaveable { mutableStateOf(false) }
+    var showAdvanced by rememberSaveable { mutableStateOf(false) }
+    val states by vm.connectionStates.collectAsState()
+    LaunchedEffect(states) {
+        if(expandedConnection != null && states[expandedConnection]?.startsWith("Connected ·") == true) { expandedConnection = null; mcpToken = "" }
+        if(showCustom && states["custom"]?.startsWith("Connected ·") == true) { showCustom = false; customName = ""; customUrl = ""; customToken = "" }
+    }
     Page("Connections", "Bring your services into a conversation when you need them.") {
         Text("Connect a service to let Cina use its available tools. Actions ask before they run unless you always allow that tool or enable YOLO mode.", color = Muted, fontSize = 13.sp)
         Text("Sign in with Linear directly. Other services currently need a token; Google Workspace also requires Google Cloud OAuth setup.", color = Muted, fontSize = 12.sp)
@@ -127,30 +133,35 @@ internal fun ConnectionsScreen(vm: AssistantViewModel) {
             TextButton(onClick = { showAvailable = !showAvailable }) { Text(if (showAvailable) "Hide available" else "+ Add") }
         }
         if (connections.none { it.connected || it.preset.id.startsWith("custom_") }) Text("No services connected. Add one when you need it.", color = Muted)
-        if (showAvailable) TextButton(onClick = { showCustom = true }) { Text("Add a custom MCP server") }
-        connections.filter { it.connected || it.preset.id.startsWith("custom_") || showAvailable }.sortedByDescending { it.connected }.forEach { connection ->
+        if (showAvailable) {
+            SectionTitle("Sign in ready")
+            Text("Linear opens a sign-in page in your browser.", color = Muted, fontSize = 12.sp)
+            TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if(showAdvanced) "Hide advanced setup" else "Advanced · tokens & custom servers") }
+            if(showAdvanced) TextButton(onClick = { showCustom = true }) { Text("Add a custom MCP server") }
+        }
+        connections.filter { it.connected || it.preset.id.startsWith("custom_") || (showAvailable && (it.preset.id == "linear" || showAdvanced)) }.sortedByDescending { it.connected }.forEach { connection ->
             val preset = connection.preset
             Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(16.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(preset.title, color = Ink, fontWeight = FontWeight.SemiBold)
                         if(preset.id.startsWith("custom_")) Text(preset.url, color = Muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(if(connection.connected && connection.toolCount > 0) "Connected · ${connection.toolCount} tools" else if(connection.connected) "Reconnect to load tools" else "Not connected", color = Muted, fontSize = 12.sp)
+                        Text(states[preset.id] ?: if(connection.connected && connection.toolCount > 0) "Connected · ${connection.toolCount} tools" else if(connection.connected) "Reconnect to load tools" else "Not connected", color = Muted, fontSize = 12.sp)
                     }
                     if(connection.connected) TextButton(onClick = { vm.disconnectMcp(preset.id); expandedConnection = null; mcpToken = "" }) { Text("Disconnect") }
                     TextButton(onClick = { expandedConnection = if(expandedConnection == preset.id) null else preset.id; mcpToken = "" }) {
-                        Text(if(connection.connected) "Renew" else if(preset.id == "linear") "Sign in" else "Connect")
+                        Text(if(connection.connected) "Reconnect" else if(preset.id == "linear") "Sign in" else "Set up")
                     }
                 }
                 if(preset.id.startsWith("custom_")) TextButton(onClick = { vm.removeMcpServer(preset.id); expandedConnection = null; mcpToken = "" }) { Text("Remove server") }
                 if(expandedConnection == preset.id) {
                     if(preset.id == "linear") {
-                        Button(onClick = { vm.startLinearSignIn(activity); expandedConnection = null }) { Text("Sign in with Linear") }
+                        Button(onClick = { vm.startLinearSignIn(activity) }) { Text("Sign in with Linear") }
                         Text("Or connect with an API key or existing OAuth token", color = Muted, fontSize = 12.sp)
                     } else Text(preset.hint, color = Muted, fontSize = 12.sp)
                     OutlinedTextField(mcpToken, { mcpToken = it }, label = { Text(if(preset.id == "linear") "API key or access token" else if(preset.id.startsWith("custom_")) "Bearer token (if needed)" else "Access token") },
                         visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    Button(onClick = { vm.connectMcp(preset.id, mcpToken); mcpToken = ""; expandedConnection = null }, enabled = mcpToken.isNotBlank() || preset.id.startsWith("custom_")) { Text("Connect") }
+                    Button(onClick = { vm.connectMcp(preset.id, mcpToken) }, enabled = states[preset.id] != "Connecting…" && (mcpToken.isNotBlank() || preset.id.startsWith("custom_"))) { Text(if(states[preset.id] == "Connecting…") "Connecting…" else "Connect") }
                 }
             }
         }
@@ -158,12 +169,13 @@ internal fun ConnectionsScreen(vm: AssistantViewModel) {
     if (showCustom) AlertDialog(onDismissRequest = { showCustom = false }, containerColor = Paper,
         title = { Text("Add MCP server") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            states["custom"]?.takeIf { !it.startsWith("Connected ·") }?.let { Text(it, color = if(it.startsWith("Could not")) MaterialTheme.colorScheme.error else Muted) }
             Text("Use a hosted HTTPS MCP endpoint. Local command servers cannot run on Android.", color = Muted, fontSize = 12.sp)
             OutlinedTextField(customName, { customName = it }, label = { Text("Server name") }, singleLine = true)
             OutlinedTextField(customUrl, { customUrl = it }, label = { Text("HTTPS URL") }, singleLine = true)
             OutlinedTextField(customToken, { customToken = it }, label = { Text("Bearer token (optional)") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), singleLine = true)
         } },
-        confirmButton = { TextButton(onClick = { vm.addMcpServer(customName, customUrl, customToken); customToken = ""; showCustom = false },
-            enabled = customName.isNotBlank() && customUrl.startsWith("https://")) { Text("Connect") } },
+        confirmButton = { TextButton(onClick = { vm.addMcpServer(customName, customUrl, customToken) },
+            enabled = states["custom"] != "Connecting…" && customName.isNotBlank() && customUrl.startsWith("https://")) { Text(if(states["custom"] == "Connecting…") "Connecting…" else "Connect") } },
         dismissButton = { TextButton(onClick = { showCustom = false }) { Text("Cancel") } })
 }

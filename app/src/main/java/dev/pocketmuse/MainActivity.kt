@@ -85,8 +85,6 @@ class MainActivity : ComponentActivity() {
         window.statusBarColor = android.graphics.Color.rgb(250, 249, 246)
         window.navigationBarColor = android.graphics.Color.rgb(250, 249, 246)
         window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        if(Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 23)
         setContent {
             MaterialTheme(
                 colorScheme = lightColorScheme(primary = Accent, onPrimary = Color.White, background = Paper, onBackground = Ink,
@@ -183,7 +181,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
         page = when (page) {
             "Models" -> modelReturnPage
             "Companion" -> companionReturnPage
-            "Connections", "Skills", "Chat preferences", "About" -> "Settings"
+            "Connections", "Skills", "Chat preferences", "About", "Response settings" -> "Settings"
             "Edit profile" -> "You"
             else -> "Chat"
         }
@@ -192,7 +190,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
     Box(Modifier.fillMaxSize().background(Paper)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
             if (page != "Chat") {
-                Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     RoundControl("‹", "Go back") { back() }
                     Spacer(Modifier.width(12.dp))
                     Text("cina", fontFamily = FontFamily.Serif, fontSize = 26.sp, color = Ink)
@@ -223,6 +221,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                         "Skills" -> SkillsScreen(vm)
                         "Connections" -> ConnectionsScreen(vm)
                         "Companion" -> Page("Companion", "Make Cina your own.") { CompanionSettings(profile, vm::saveCompanionSettings) }
+                        "Response settings" -> Page("Responses", "Choose speed, model, and level of detail.") { ResponseSettings(vm) }
                         "Chat preferences" -> ChatPreferencesScreen(vm)
                         "About" -> AboutScreen(updateStatus, onCheckUpdates)
                         else -> SettingsScreen(vm, onNavigate = {
@@ -240,7 +239,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
         AnimatedVisibility(menuOpen, enter = slideInHorizontally(tween(220)) { -it } + fadeIn(tween(180)),
             exit = slideOutHorizontally(tween(180)) { -it } + fadeOut(tween(180))) {
             Surface(Modifier.fillMaxHeight().fillMaxWidth(.82f), color = Paper, shadowElevation = 10.dp) {
-                Column(Modifier.statusBarsPadding().navigationBarsPadding().padding(24.dp)) {
+                Column(Modifier.statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp)) {
                     Text("cina", fontFamily = FontFamily.Serif, fontSize = 38.sp, color = Ink)
                     Text("A little space to think.", color = Muted, fontSize = 13.sp)
                     Spacer(Modifier.height(32.dp))
@@ -264,7 +263,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
             }
         }
     }
-    pending?.let { action -> ActionApprovalDialog(action, onReject = vm::reject, onApprove = { vm.approve() }, onAlwaysAllow = { vm.approve(always = true) }) }
+    pending?.let { action -> ActionApprovalDialog(action, vm.pendingItemLabel(action.request), vm.pendingNote(action.request), vm::approvalError, onReject = vm::reject, onApprove = { request, always -> vm.approve(always, request) }) }
     if (availableUpdate != null && pending == null) AlertDialog(onDismissRequest = onDismissUpdate, containerColor = Paper,
         title = { Text("Cina update available") }, text = { Text("${availableUpdate.version} is ready. Download the APK to update Cina.") },
         confirmButton = { TextButton(onClick = { onDownloadUpdate(availableUpdate) }) { Text("Download") } },
@@ -288,6 +287,9 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
     val attachments by vm.attachments.collectAsState(); val profile by vm.youProfile.collectAsState()
     val benchmarking by vm.benchmarking.collectAsState(); val pending by vm.pending.collectAsState()
     val tasks by vm.agentTasks.collectAsState()
+    val turns by vm.turns.collectAsState()
+    val stage by vm.stage.collectAsState()
+    val memoryEnabled by vm.memoryEnabled.collectAsState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.attachFile(uri) }
     val chat = chats.firstOrNull { it.id == active }
     val modelName = models.firstOrNull { it.path == selected }?.name
@@ -298,6 +300,9 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
         if (widgetDraftKey > handledWidgetDraftKey) { drafts[active] = widgetDraft.orEmpty(); handledWidgetDraftKey = widgetDraftKey }
     }
     var showChats by remember { mutableStateOf(false) }
+    var showFiles by remember { mutableStateOf(false) }
+    var editingTurn by remember { mutableStateOf<TurnRecord?>(null) }
+    var editedRequest by rememberSaveable { mutableStateOf("") }
     var showLog by remember { mutableStateOf(false) }
     var showModels by remember { mutableStateOf(false) }
     var showOptions by remember { mutableStateOf(false) }
@@ -313,16 +318,12 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
         val resolvedMode by vm.resolvedMode.collectAsState()
         val responseModel by vm.responseModelName.collectAsState()
         val undo by vm.memoryUndo.collectAsState()
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ResponseMode.entries.forEach { mode -> FilterChip(selected = mode == responseMode, onClick = { vm.setResponseMode(mode) }, label = { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }) }) }
-        }
-        if (responseMode == ResponseMode.AUTO && resolvedMode != null) Text("Last response: ${resolvedMode!!.name.lowercase()} · $responseModel", Modifier.padding(horizontal = 20.dp), color = Muted, fontSize = 11.sp)
         if (undo.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Saved ${undo.size} useful detail(s)", Modifier.weight(1f), color = Muted, fontSize = 12.sp)
             TextButton(onClick = vm::undoMemories) { Text("Undo") }
             TextButton(onClick = vm::keepMemories) { Text("Keep") }
         }
-        Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundControl("☰", "Open menu", onMenu)
             Spacer(Modifier.width(12.dp))
             if (profile.showPet) {
@@ -352,13 +353,20 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
             TextButton(onClick = { showModels = true }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp), modifier = Modifier.weight(1f)) {
                 Text("${modelName ?: "Choose a model"} ⌄", color = Accent, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            Box {
+                var modes by remember { mutableStateOf(false) }
+                TextButton(onClick = { modes = true }) { Text(responseMode.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                DropdownMenu(modes, onDismissRequest = { modes = false }) {
+                    ResponseMode.entries.forEach { mode -> DropdownMenuItem(text = { Text(when(mode) { ResponseMode.AUTO -> "Auto · chooses for this request"; ResponseMode.QUICK -> "Quick · everyday questions"; ResponseMode.DEEP -> "Deep · complex work" }) }, onClick = { vm.setResponseMode(mode); modes = false }) }
+                }
+            }
             if (chat?.web == true) Text("WEB ON", color = Accent, fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp))
             if (chat?.yolo == true) TextButton(onClick = { vm.stop(); vm.setFlag("yolo", false) }) { Text("Stop auto actions", fontSize = 11.sp) }
         }
         if (chat?.yolo == true) Text("Actions run without asking", Modifier.padding(horizontal = 20.dp), color = Muted, fontSize = 11.sp)
         if (messages.isEmpty() && !busy) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("A little space to think.", fontFamily = FontFamily.Serif, fontSize = 30.sp, color = Ink)
                     Spacer(Modifier.height(10.dp))
                     Text(if (modelName == null) "Start with a model that runs on your phone." else "Ask a question, save a thought, or make a plan.",
@@ -382,6 +390,15 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
                                 SelectionContainer { Text(message.body, Modifier.widthIn(max = 310.dp).padding(horizontal = 17.dp, vertical = 13.dp), color = Ink, fontSize = 15.sp, lineHeight = 23.sp) }
                             }
                         }
+                        turns.firstOrNull { it.id == message.id && it.status in setOf("failed", "interrupted") }?.let { turn ->
+                            Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(14.dp)).padding(12.dp)) {
+                                Text(turn.error, color = Ink, fontSize = 13.sp)
+                                Row {
+                                    TextButton(onClick = { vm.retryTurn(turn.id) }, enabled = canSend) { Text("Retry") }
+                                    TextButton(onClick = { editingTurn = turn; editedRequest = turn.request }, enabled = canSend) { Text("Edit request") }
+                                }
+                            }
+                        }
                     } else {
                         Column(Modifier.fillMaxWidth().animateContentSize()) {
                             Text("CINA", color = Accent, fontSize = 10.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.SemiBold)
@@ -393,14 +410,15 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
                     Column(Modifier.fillMaxWidth().animateContentSize()) {
                         Text("CINA", color = Accent, fontSize = 10.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
+                        Text(stage, color = Muted, fontSize = 12.sp)
                         if (live.isBlank()) WorkingIndicator() else AssistantResponse(live, streaming = true)
                     }
                 }
             }
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-            if (attachments.isNotEmpty()) Text("${attachments.size} file${if (attachments.size == 1) "" else "s"} · ${attachments.joinToString { it.name }}",
-                Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (attachments.isNotEmpty()) TextButton(onClick = { showFiles = true }) { Text("${attachments.size} attached file${if (attachments.size == 1) "" else "s"} · Review", fontSize = 12.sp) }
+            if (messages.isEmpty() && text.isBlank()) Text(if (memoryEnabled) "Memory on · Review new details in You → Memory." else "Memory off · Saved details are not used or collected.", Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = Muted, fontSize = 12.sp)
             Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(28.dp)).padding(4.dp), verticalAlignment = Alignment.Bottom) {
                 Box {
                     IconButton(onClick = { showComposerActions = true }, enabled = !busy) {
@@ -437,18 +455,12 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
             Spacer(Modifier.height(20.dp))
         }
     }
-    if (showChats) ModalBottomSheet(onDismissRequest = { showChats = false }, containerColor = Paper) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).navigationBarsPadding()) {
-            SectionTitle("Conversations")
-            LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                items(chats, key = { it.id }) { item ->
-                    PaperRow(item.title, if (item.id == active) "Current chat" else "Saved on this phone", "Open") { vm.openChat(item.id); showChats = false }
-                }
-            }
-            TextButton(onClick = { vm.newChat(); showChats = false }, modifier = Modifier.fillMaxWidth()) { Text("New chat") }
-            Spacer(Modifier.height(20.dp))
-        }
-    }
+    if (showChats) ConversationSheet(vm) { showChats = false }
+    if (showFiles) AttachmentsDialog(vm) { showFiles = false }
+    editingTurn?.let { turn -> AlertDialog(onDismissRequest = { editingTurn = null }, title = { Text("Edit & retry") },
+        text = { Column { Text("Completed actions stay recorded and are not undone.", color = Muted); OutlinedTextField(editedRequest, { editedRequest = it }, label = { Text("Request") }, minLines = 3) } },
+        confirmButton = { TextButton(onClick = { if(vm.send(editedRequest, turn.id)) editingTurn = null }, enabled = editedRequest.isNotBlank() && canSend) { Text("Retry") } },
+        dismissButton = { TextButton(onClick = { editingTurn = null }) { Text("Cancel") } }) }
     if (showLog) AlertDialog(onDismissRequest = { showLog = false }, containerColor = Paper, title = { Text("Recent actions") },
         text = { Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
             if (logs.isEmpty()) Text("Nothing yet.", color = Muted) else logs.forEach { Text(it, Modifier.padding(bottom = 14.dp), color = Ink) }

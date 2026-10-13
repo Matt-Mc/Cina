@@ -21,11 +21,10 @@ class ResponsePolicyTest {
         assertTrue(ResponsePolicy.skills(AssistantSkills.builtIns, "weekly planning").contains("Draft a day-by-day plan"))
     }
     @Test fun toolSelectionHasAnEscapeRoute() {
-        val spec = "local_find(query:string)\ncreate_note(title:string)\ncreate_reminder(title:string)\nweb_search(query:string)"
-        val simple = ResponsePolicy.tools(spec, "Hello")
-        assertFalse(simple.contains("create_note("))
-        assertTrue(simple.contains("local_find("))
-        assertTrue(ResponsePolicy.tools(spec, "remind me tomorrow").contains("create_reminder("))
+        val simple = ToolCatalog.select("Hello")
+        assertFalse(simple.any { it.name == "create_note" })
+        assertTrue(simple.any { it.name == "local_find" })
+        assertTrue(ToolCatalog.select("remind me tomorrow").any { it.name == "create_reminder" })
     }
     @Test fun credentialsAreExcludedAndSensitiveDetailsNeedReview() {
         assertTrue(MemorySafety.isCredential("My API key is abc"))

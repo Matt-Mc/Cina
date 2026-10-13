@@ -70,14 +70,15 @@ Long-press the Android home screen, open **Widgets**, and find **Cina**. **Quick
 
 ## Local response modes and timing
 
-Auto is the default, with Quick and Deep overrides in chat. Assign local models for each mode in Settings, or use the same model for both. Quick disables thinking when the model template supports that control. Settings → Response timings shows local measurements for the last 30 runs without recording message content. See [response modes, memory processing, and the Fold 7 validation protocol](docs/local-response-performance.md).
+Auto is the default, with Quick and Deep overrides in chat. Assign local models for each mode in Settings → Responses, or use the same model for both. Quick disables thinking when the model template supports that control. Settings → Responses → Response timings shows local measurements for the last 30 runs without recording message content. See [response modes, memory processing, and the Fold 7 validation protocol](docs/local-response-performance.md).
 
 ## Goals, files, memory, and model benchmarks
 
-- Type a request in chat, tap **+**, and choose **Track as goal** to track it in **Tasks → Goals**. Cina saves tool results and approval checkpoints with the goal. You can return to a paused or waiting goal, follow up, or mark it complete. Goal execution runs while the chat is active; closing the app preserves progress but does not keep that goal running in the background. Scheduled tasks remain a separate feature.
+- Choose **Tasks → Goals → New goal**, or type a request in chat, tap **+**, and choose **Track as goal** to track it in **Tasks → Goals**. Cina saves tool results and approval checkpoints with the goal. You can return to a paused or waiting goal, follow up, or mark it complete. Goal execution runs while the chat is active; closing the app preserves progress but does not keep that goal running in the background. Scheduled tasks remain a separate feature.
 - Tap **+ → Attach a file** beside the chat input to add a text document or a PDF. Cina extracts and indexes selectable text locally, searches relevant passages when you ask about the file, and identifies the file and passage in its response. Supported text files include TXT, Markdown, CSV, JSON, XML, HTML, and logs. Files are limited to 8 MB; extracted text is limited to 250,000 characters. Scanned PDFs and images need OCR and are not supported yet. The searchable text is stored with the chat on this phone.
 - **You → Memory** shows proposed personal facts for review before saving them. Suggestions and saved facts show their source conversation. Cina also maintains a short rolling summary of older conversation turns for continuity.
-- In **Settings → Models → Installed**, open a model’s details and choose **Benchmark** to measure generation speed on this phone and run three short Cina task checks. The recommendation is based only on these checks and speed; test real requests before relying on a model for important work.
+- In **Settings → Models**, choose **Benchmark this phone** to test every installed model, follow progress, or stop the run. Results show generation speed and three short Cina task checks, with separate **Quick** and **Deep** model assignments. A model’s details also offer an individual **Benchmark**. These checks are a starting comparison; test real requests before relying on a model for important work.
+- **Discover** loads popular text GGUF models from Hugging Face and checks single-file options against this phone’s memory and storage. Starting picks use download counts and file size; benchmark downloaded models to measure their performance here.
 
 ## Skills
 
@@ -85,9 +86,9 @@ Open **Settings → Skills** to enable, disable, or edit procedures for Remember
 
 Ask Cina to create a skill for a recurring workflow. It drafts a title, a description explaining when to use it, and instructions with steps and a completion check, then requests `create_skill`. The existing approval dialog shows all instructions before saving (unless you already allow that tool or use YOLO mode). Custom skills are enabled after saving and can be edited, toggled, or deleted in Settings. Up to eight custom skills are stored locally. Instructions are limited to 1,200 characters per skill. Repeating an identical creation does not add a duplicate; conflicting titles require editing the existing skill.
 
-Interactive prompts include a compact procedure catalog and up to two matching procedures. Cina can load another enabled procedure with find_skill when needed. Skills do not grant permissions, enable web search, install external skills, execute scripts, or add capabilities. A larger enabled collection increases prompt size, and guidance still depends on the local model. Scheduled tasks cannot create skills or save memories. Memory maintenance reads saved facts with `search_memories` and suggests changes for review in You → Memory.
+Interactive prompts include a compact procedure catalog and at most one matching procedure. Cina can load another enabled procedure with find_skill when needed. Skills do not grant permissions, enable web search, install external skills, execute scripts, or add capabilities. A larger enabled collection increases prompt size, and guidance still depends on the local model. Scheduled tasks cannot create skills or save memories. Memory maintenance reads saved facts with `search_memories` and suggests changes for review in You → Memory.
 
-When explicitly asked to remember a fact, Cina can request `save_memory`. Its approval shows the exact fact before saving, unless already allowed or using YOLO mode. Saved facts appear in **You → Memory** with a source conversation and can inform future chats. Exact duplicates are skipped. Memory tools are unavailable while memory is off. Ordinary incidental facts with supporting evidence save automatically with Undo; sensitive, uncertain, and conflicting facts are proposed for review. Temporary plans retain their source date and expire from active memory retrieval.
+When explicitly asked to remember a fact, Cina can request `save_memory`. Its approval shows the exact fact before saving, unless already allowed or using YOLO mode. Saved facts appear in **You → Memory** with a source conversation and can inform future chats. Exact duplicates are skipped. Memory tools are unavailable while memory is off. All incidental facts are proposed for review. Extraction asks for a fact and a supporting quote; the app handles retention dates and duplicate checks. You can choose which existing fact a correction replaces. Temporary plans retain their source date and expire from active memory retrieval.
 
 ## Skill device checks
 
@@ -110,8 +111,20 @@ The assistant requests confirmation before creating or sharing data, including s
 
 - GGUF text chat models only. Import validation checks GGUF structure; llama.cpp decides whether an architecture can run on this device.
 - Reminder notifications are inexact and depend on Android notification permission and battery policy.
-- Scheduled tasks run locally through Android's persistent work scheduler, so the actual start time can be later than requested. Each run can make up to three local tool calls and produces a text response; connected-tool and Android screen actions are unavailable in the background. The selected model must remain on the phone. Long model runs can be interrupted by Android and may need another attempt.
+- Scheduled tasks run locally through Android's persistent work scheduler, so the actual start time can be later than requested. Each run can make up to three writes and eight reads (with a separate discovery budget) and produces a text response; connected-tool and Android screen actions are unavailable in the background. The selected model must remain on the phone. Long model runs can be interrupted by Android and may need another attempt.
 - Web search sends its query to DuckDuckGo. If that search fails and a Brave key is saved, Cina retries with Brave. Search results are treated as untrusted input to the local model.
 - No cloud inference, voice, accessibility automation, or background autonomous agent. Connected MCP services do exchange data with their providers when used.
 - Goals survive app restarts, but only scheduled tasks execute while the chat is closed. Attached files are currently indexed by extracted text; scanned pages, images, and other binary formats are not interpreted.
 - Device performance and memory use vary by model. The app gives an estimate before download; test on target phones before distribution.
+
+## Usability and action reliability
+
+The [October 2026 implementation notes](docs/usability-fixes-2026-10-13.md) describe the audit fixes and validation limits.
+
+- Open the chat title for search, rename, archive, delete, and Markdown export. Deletion removes attached text, summaries, pending suggestions, and goal history; you choose whether saved memories are also deleted. Notes and reminders remain independent.
+- Tap the attached-file count to read extracted text or remove a file. Notes can also be exported through Android's document picker.
+- Action previews show complete editable values, nested connected-service arguments, resolved note/reminder titles, and local dates. Persistent permission is a separate, off-by-default choice.
+- Interrupted requests offer Retry and Edit. Approvals and execution receipts survive restart. Exact completed calls return their saved receipt; uncertain calls are blocked. New writes during recovery require review, even with automatic actions enabled.
+- Schedules support editing, changing the model, Run now, and Retry. Manual runs preserve the regular schedule. Notification access is requested where it is needed, rather than at startup.
+- One typed tool catalog supplies instructions, argument validation, labels, availability, and the native action grammar. Discovery/read budgets no longer consume the write budget. Long notes have paged reads, version checks, and append/partial edits.
+- The grammar constrains action syntax; it cannot make an unsuitable model understand a task or choose the right action. Test models on the target phone before relying on their actions.
