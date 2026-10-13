@@ -54,6 +54,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
     }
     @Synchronized fun updateTurn(id: Long, status: String, error: String = "", pending: PendingAction? = null) {
         val payload = pending?.let { JSONObject().put("name", it.request.name).put("arguments", it.request.arguments)
+            .put("original_call_key", it.request.originalCallKey)
             .put("request", it.originalUserText).put("depth", it.depth).put("calls", JSONArray(it.executedCalls)).put("results", JSONArray(it.toolResults)).toString() }
         writableDatabase.update("turns", ContentValues().apply { put("status", status); put("error", error); put("pending", payload) }, "id=?", arrayOf(id.toString()))
     }
@@ -63,7 +64,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
                 val pending = if (c.isNull(7)) null else runCatching {
                     val j = JSONObject(c.getString(7))
                     fun strings(key: String): List<String> = j.getJSONArray(key).let { a -> (0 until a.length()).map { a.getString(it) } }
-                    PendingAction(ToolRequest(j.getString("name"), j.getJSONObject("arguments")), j.getString("request"), j.getInt("depth"), strings("calls"), strings("results"))
+                    PendingAction(ToolRequest(j.getString("name"), j.getJSONObject("arguments"), j.optString("original_call_key").takeIf { it.isNotEmpty() }), j.getString("request"), j.getInt("depth"), strings("calls"), strings("results"))
                 }.getOrNull()
                 add(TurnRecord(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getString(5), c.getString(6), pending, c.getString(8), c.getInt(9)))
             }
@@ -75,26 +76,34 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
     }
     @Synchronized fun hasToolHistory(scope: String): Boolean = readableDatabase.rawQuery("SELECT 1 FROM tool_receipts WHERE scope=? LIMIT 1", arrayOf(scope)).use { it.moveToFirst() }
     /** null means new; an existing pending receipt means the previous outcome is uncertain. Never replay it. */
-    @Synchronized fun beginTool(scope: String, key: String): String? {
+    @Synchronized fun beginTool(scope: String, key: String, aliases: List<String> = emptyList()): String? {
         val db = writableDatabase
+        val keys = (listOf(key) + aliases).distinct()
         db.beginTransaction()
         try {
-            db.rawQuery("SELECT result FROM tool_receipts WHERE scope=? AND call_key=?", arrayOf(scope, key)).use { c ->
+            for (candidate in keys) db.rawQuery("SELECT result FROM tool_receipts WHERE scope=? AND call_key=?", arrayOf(scope, candidate)).use { c ->
                 if (c.moveToFirst()) return if (c.isNull(0)) JSONObject().put("status", "uncertain").put("message", "This action may already have run before interruption. Check the saved item or connected service before requesting it again.").toString() else c.getString(0)
             }
-            db.insertOrThrow("tool_receipts", null, ContentValues().apply { put("scope", scope); put("call_key", key) })
+            keys.forEach { candidate -> db.insertOrThrow("tool_receipts", null, ContentValues().apply { put("scope", scope); put("call_key", candidate) }) }
             db.setTransactionSuccessful()
             return null
         } finally { db.endTransaction() }
     }
-    @Synchronized fun finishTool(scope: String, key: String, result: String) {
-        writableDatabase.update("tool_receipts", ContentValues().apply { put("result", result) }, "scope=? AND call_key=?", arrayOf(scope, key))
+    @Synchronized fun finishTool(scope: String, key: String, result: String, aliases: List<String> = emptyList()) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            (listOf(key) + aliases).distinct().forEach { candidate ->
+                db.update("tool_receipts", ContentValues().apply { put("result", result) }, "scope=? AND call_key=?", arrayOf(scope, candidate))
+            }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
     }
     @Synchronized fun toolHistory(scope: String): List<String> = buildList {
         readableDatabase.rawQuery("SELECT call_key,result FROM tool_receipts WHERE scope=? ORDER BY rowid", arrayOf(scope)).use { c ->
             while(c.moveToNext()) add("${c.getString(0).substringBefore(':')}: ${if(c.isNull(1)) "Outcome uncertain; do not repeat." else c.getString(1)}")
         }
-    }
+    }.distinct()
     @Synchronized fun recordNoteRead(scope: String, note: Note, start: Int, end: Int) {
         val previous = readableDatabase.rawQuery("SELECT version,through_char FROM note_reads WHERE scope=? AND note_id=?", arrayOf(scope, note.id.toString())).use { c -> if(c.moveToFirst() && c.getLong(0) == note.version) c.getInt(1) else 0 }
         if (start <= previous) writableDatabase.insertWithOnConflict("note_reads", null, ContentValues().apply {

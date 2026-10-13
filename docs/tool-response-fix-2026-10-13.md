@@ -1,5 +1,7 @@
 # Tool requests appearing as final replies
 
+Historical notes for PR #14. See [the follow-up reliability investigation](tool-reliability-2026-10-13.md) for the expanded parser, native continuation fix, retry handling, and additional validation.
+
 The two reported screenshots contain attempted calls, not execution results:
 
 - `[create_reminder]title: Bring a jacket at 11:30, when_text: "11:30 AM"[/create_reminder]`

@@ -11,8 +11,8 @@ class UsabilityPolicyTest {
         val allowed = ToolCatalog.definitions.filter { it.scheduled }.map { it.name }.toSet()
         assertEquals(allowed, ToolCatalog.select("Hello", scheduled = true).map { it.name }.toSet())
         val rendered = ToolCatalog.render(ToolCatalog.select("Hello", scheduled = true), true)
-        allowed.forEach { assertTrue(rendered.contains("$it(")) }
-        assertFalse(rendered.contains("mcp_call("))
+        allowed.forEach { assertTrue(rendered.contains("$it — arguments:")) }
+        assertFalse(rendered.contains("mcp_call — arguments:"))
     }
     @Test fun shortFollowUpsKeepRecentActionsAndFilesAreAvailableWithoutKeywordGuessing() {
         assertTrue(ToolCatalog.select("Move it to tomorrow at 3 pm", recent = "Remind me to call Sam").any { it.name == "reschedule_reminder" })

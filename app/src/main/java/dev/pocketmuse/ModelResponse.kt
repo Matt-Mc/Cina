@@ -30,11 +30,12 @@ internal fun splitModelResponse(raw: String): ModelResponse {
 /** Hide tool syntax from the first streamed prefix, including incomplete opening tags. */
 internal fun visibleModelResponse(raw: String): String {
     val answer = splitModelResponse(raw).answer.trimStart()
-    return if (ToolResponseProtocol.isAttempt(answer)) "" else raw
+    return if (ToolResponseProtocol.hideWhileStreaming(answer)) "" else raw
 }
 
 /** A nonblank raw response can still contain only reasoning or incomplete tool syntax. */
-internal fun hasFinalAnswer(raw: String): Boolean =
-    splitModelResponse(raw).answer.isNotBlank() && visibleModelResponse(raw).isNotBlank()
+internal fun hasFinalAnswer(raw: String): Boolean = splitModelResponse(raw).answer.let {
+    it.isNotBlank() && !ToolResponseProtocol.isAttempt(it)
+}
 
 internal const val EMPTY_REPLY_FALLBACK = "I couldn't produce a final reply. Please try again."

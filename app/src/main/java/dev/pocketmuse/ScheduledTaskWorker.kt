@@ -58,6 +58,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
             val task = store.scheduledTask(id) ?: return Result.success()
             if ((!manual && !task.enabled) || task.nextRunMillis != scheduledFor) return Result.success()
             store.setScheduledRunning(id, scheduledFor, true)
+            var confirmedResults: String? = null
             val outcome = runCatching {
                 val model = store.models().firstOrNull { it.path == task.modelPath }
                     ?: error("The selected model is no longer on this phone.")
@@ -73,19 +74,24 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                             var answer = splitModelResponse(runtime.generate(task.prompt) {}).answer
                             val executedCalls = mutableListOf<String>()
                             val results = mutableListOf<String>()
-                            suspend fun finish(raw: String): String = if (hasFinalAnswer(raw)) raw
-                                else runtime.recoverTextAnswer(task.prompt, results)
+                            suspend fun finish(raw: String): String {
+                                val final = if (hasFinalAnswer(raw)) raw else runtime.recoverTextAnswer(task.prompt, results)
+                                require(final != EMPTY_REPLY_FALLBACK) { "The model did not finish an answer. Completed tool results are preserved." }
+                                return final
+                            }
                             repeat(20) {
                                 val request = runtime.parseAction(answer, task.prompt, results, tools) ?: return@withTimeout finish(answer)
                                 val key = tools.callKey(request)
                                 val blocked = ToolTurnPolicy.blockReason(key, tools.needsConfirmation(request), executedCalls, 3)
+                                if (blocked == ToolTurnPolicy.REPEATED_CALL && results.isNotEmpty()) return@withTimeout finish("")
                                 require(blocked == null) { blocked.orEmpty() }
                                 executedCalls.add(key)
                                 val result = try { tools.execute(chat, request, "scheduled:$id:$executionTime") }
                                     catch (e: CancellationException) { throw e }
                                     catch (e: Exception) { tools.failure(e) }
                                 require(tools.succeeded(result)) { tools.resultMessage(result) }
-                                results.add("${request.name}: ${result.take(1200)}")
+                                results.add(result)
+                                confirmedResults = tools.confirmedResults(results)
                                 answer = splitModelResponse(runtime.generate(
                                     AssistantPrompt.toolFollowUp(task.prompt, request.name, result)
                                 ) {}).answer
@@ -102,7 +108,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
             }
             val next = ScheduledTaskScheduler.nextRun(scheduledFor, task.repeat)
             val error = outcome.exceptionOrNull()?.message?.take(300) ?: if (outcome.isFailure) "The model could not run." else null
-            store.finishScheduledTask(id, scheduledFor, outcome.getOrNull(), error, next, manual, executionTime)
+            store.finishScheduledTask(id, scheduledFor, outcome.getOrNull() ?: confirmedResults, error, next, manual, executionTime)
             TodayWidget.updateAll(applicationContext)
             val updated = store.scheduledTask(id)
             if (!manual && updated?.enabled == true && updated.nextRunMillis == next) ScheduledTaskScheduler.schedule(applicationContext, updated)

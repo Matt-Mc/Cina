@@ -7,7 +7,7 @@ internal data class ToolField(val name: String, val type: String = "string", val
     val max: Int = 2000, val choices: List<String> = emptyList())
 internal data class ToolDefinition(val name: String, val label: String, val group: String, val kind: ToolKind,
     val instruction: String, val fields: List<ToolField>, val scheduled: Boolean = false) {
-    fun instructionLine(): String = "$name(${fields.joinToString { "${it.name}${if (it.required) "" else "?"}:${if (it.choices.isEmpty()) it.type else it.choices.joinToString("|")}" }}): $instruction"
+    fun instructionLine(): String = "$name — arguments: ${fields.joinToString { "${it.name}${if (it.required) "" else "?"}:${if (it.choices.isEmpty()) it.type else it.choices.joinToString("|")}" }.ifEmpty { "none (use {})" }}. $instruction"
     fun validate(arguments: JSONObject) {
         require(arguments.keys().asSequence().all { key -> fields.any { it.name == key } }) { "Unknown field for $name. Use its listed fields." }
         fields.forEach { field ->
@@ -60,8 +60,8 @@ internal object ToolCatalog {
     )
     fun get(name: String) = definitions.firstOrNull { it.name == name }
     fun kind(name: String) = get(name)?.kind ?: ToolKind.WRITE
-    fun schema(scheduled: Boolean = false): String = JSONObject().put("oneOf", org.json.JSONArray(
-        definitions.filter { !scheduled || it.scheduled }.map { tool ->
+    fun schema(scheduled: Boolean = false, onlyName: String? = null): String = JSONObject().put("oneOf", org.json.JSONArray(
+        definitions.filter { (!scheduled || it.scheduled) && (onlyName == null || it.name == onlyName) }.map { tool ->
             val properties = JSONObject()
             tool.fields.forEach { field -> properties.put(field.name, JSONObject().put("type", field.type).apply {
                 if (field.choices.isNotEmpty()) put("enum", org.json.JSONArray(field.choices))
@@ -83,6 +83,7 @@ internal object ToolCatalog {
     }
     fun render(tools: List<ToolDefinition>, scheduled: Boolean = false): String = """
         Request exactly one tool with no other text: [tool]{"name":"tool_name","arguments":{"key":"value"}}[/tool]
+        Always use the literal [tool] and [/tool] tags. Put the tool name in JSON, never in a tag or function call.
         Use only the tools below. Required fields have no ?. Never guess missing required details.
         ${if (scheduled) "This is unattended work. If details are missing, report what is missing in the saved result; do not wait for a reply." else "If required details are missing, ask one focused question."}
         Results contain status and message. Only status=success confirms completion. Never repeat a completed action.

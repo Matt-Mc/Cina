@@ -5,14 +5,23 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 
+internal class ToolDetailsRequiredException(message: String) : IllegalArgumentException(message)
+
 /** Conservative parser: unsupported or ambiguous phrases are returned to the editable time picker. */
 internal object ReminderTime {
+    /** Model-supplied times must come from the user's words, not the system clock or a tool result. */
+    fun isUserProvided(phrase: String, userText: String): Boolean {
+        fun normalize(value: String) = value.lowercase(Locale.ROOT).replace(Regex("\\s+"), " ").trim()
+        val time = normalize(phrase).removePrefix("in ")
+        return time.isNotBlank() && Regex("(?<![\\p{L}\\p{N}])${Regex.escape(time)}(?![\\p{L}\\p{N}])").containsMatchIn(normalize(userText))
+    }
+
     fun parse(text: String, now: ZonedDateTime = ZonedDateTime.now()): Instant {
         val input = text.trim()
         runCatching { OffsetDateTime.parse(input).toInstant() }.getOrNull()?.let { return future(it, now) }
         runCatching { ZonedDateTime.parse(input).toInstant() }.getOrNull()?.let { return future(it, now) }
         val phrase = input.lowercase(Locale.ROOT)
-        Regex("in (\\d{1,4}) (minute|hour|day)s?").matchEntire(phrase)?.let {
+        Regex("(?:in\\s+)?(\\d{1,4})\\s+(minute|hour|day)s?").matchEntire(phrase)?.let {
             val amount = it.groupValues[1].toLong()
             require(amount > 0) { "Choose a future time." }
             return when (it.groupValues[2]) {

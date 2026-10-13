@@ -39,7 +39,7 @@ class ToolResponseRecoveryTest {
         val file = File(base.cacheDir, "tool-response-${System.nanoTime()}.db")
         val context = object : ContextWrapper(base) { override fun getDatabasePath(name: String) = file }
         ModelAccess.mutex.withLock {
-            try { LocalStore(context).use { block(context, it) } }
+            try { LocalStore(context).use { store -> try { block(context, store) } finally { store.reminders().forEach { ReminderReceiver.cancel(context, it.id) } } } }
             finally { android.database.sqlite.SQLiteDatabase.deleteDatabase(file); ModelAccess.owner = null }
         }
     }
@@ -77,7 +77,7 @@ class ToolResponseRecoveryTest {
         } finally { runtime.release() }
     }
 
-    @Test fun screenshotSearchIsRepairedButASecondBadCallCannotLoop() = fixture { context, store ->
+    @Test fun screenshotSearchIsDecodedWithoutAnotherModelPass() = fixture { context, store ->
         val canonical = """[tool]{"name":"web_search","arguments":{"query":"stores around ottawa that sell riftbound"}}[/tool]"""
         val engine = ScriptedEngine(canonical)
         val tools = AssistantTools(context, store)
@@ -91,8 +91,8 @@ class ToolResponseRecoveryTest {
             assertEquals("web_search", request.name)
             assertEquals("stores around ottawa that sell riftbound", request.arguments.getString("query"))
             assertFalse(tools.needsConfirmation(request))
-            assertTrue(runCatching { runtime.parseAction(malformed, original, emptyList(), tools) }.isFailure)
-            assertEquals(1, engine.forcedCalls)
+            assertEquals(0, engine.forcedCalls)
+            assertEquals(1, engine.remaining.size)
         } finally { runtime.release() }
     }
 
@@ -103,9 +103,184 @@ class ToolResponseRecoveryTest {
         try {
             runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), Chat(0, "Test", false, false), false, YouProfile(), "Save a note")
             assertTrue(runCatching { runtime.parseAction("[create_note]bad[/create_note]", "Save a note", emptyList(), tools) }.isFailure)
-            val invalid = tools.parse("""[tool]{"name":"create_note","arguments":{"title":"Packing","body":42}}[/tool]""")!!
-            assertTrue(runCatching { tools.normalize(invalid) }.isFailure)
+            assertTrue(runCatching { tools.parse("""[tool]{"name":"create_note","arguments":{"title":"Packing","body":42}}[/tool]""") }.isFailure)
             assertTrue(store.notes().isEmpty())
         } finally { runtime.release() }
+    }
+
+    @Test fun bothNewScreenshotCallsExecuteAndReturnResultsWithoutRepair() = fixture { context, store ->
+        var searched = ""
+        val tools = AssistantTools(context, store, webSearch = { searched = it; "Fixture Games - https://example.com/ottawa - Riftbound in stock" })
+        val engine = ScriptedEngine("Fixture Games lists Riftbound: https://example.com/ottawa", "Your jacket reminder is saved.")
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val chat = store.chat(store.newChat(web = true))!!
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), chat, false, YouProfile(), "Search and remind me")
+            val search = runtime.parseAction("""web_search("stores around Ottawa that sell riftbound")""", "Search Ottawa", emptyList(), tools)!!
+            val searchResult = tools.execute(chat, search, "screenshot:search")
+            assertTrue(tools.succeeded(searchResult))
+            assertEquals("stores around Ottawa that sell riftbound", searched)
+            assertTrue(runtime.generate(AssistantPrompt.toolFollowUp("Search Ottawa", search.name, searchResult)) {}.contains("example.com"))
+            val reminder = runtime.parseAction("""create_reminder(title: "Jacket", when_text: "10 minutes")""", "Remind me in 10 minutes", listOf(searchResult), tools)!!
+            assertTrue(tools.needsConfirmation(reminder))
+            assertTrue(store.reminders().isEmpty())
+            val before = System.currentTimeMillis()
+            val result = tools.execute(chat, reminder, "screenshot:approved-reminder")
+            assertTrue(tools.succeeded(result))
+            val saved = store.reminders().single()
+            assertTrue(saved.whenMillis in (before + 600_000)..(System.currentTimeMillis() + 600_000))
+            assertTrue(hasFinalAnswer(runtime.generate(AssistantPrompt.toolFollowUp("Remind me", reminder.name, result)) {}))
+            assertEquals(0, engine.forcedCalls)
+            assertTrue(engine.remaining.isEmpty())
+        } finally { runtime.release() }
+    }
+
+    @Test fun relativeReminderReplayReturnsOneReceiptAcrossRestart() = fixture { context, store ->
+        val tools = AssistantTools(context, store)
+        val chat = store.chat(store.newChat())!!
+        val request = tools.parse("""create_reminder(title="Jacket", when_text="10 minutes")""")!!
+        val turnId = store.addMessage(chat.id, "user", "Remind me in 10 minutes")
+        store.saveTurn(turnId, chat.id, "Remind me in 10 minutes", "test", "QUICK")
+        store.updateTurn(turnId, "approval", pending = PendingAction(tools.normalize(request), "Remind me in 10 minutes", 0, emptyList(), emptyList()))
+        val approved = store.turns(chat.id).single().pending!!.request
+        assertEquals(tools.callKey(request), approved.originalCallKey)
+        val first = tools.execute(chat, tools.normalize(approved), "reminder:retry")
+        assertTrue(tools.succeeded(first))
+        LocalStore(context).use { reopened ->
+            val resumed = AssistantTools(context, reopened)
+            assertEquals(first, resumed.execute(chat, request, "reminder:retry"))
+            val reformatted = resumed.parse("create_reminder(title='Jacket', when_text='In  10 MINUTES')")!!
+            assertEquals(first, resumed.execute(chat, reformatted, "reminder:retry"))
+            assertEquals(1, reopened.reminders().size)
+            assertEquals(1, reopened.toolHistory("reminder:retry").size)
+        }
+    }
+
+    @Test fun unresolvedRelativeWriteCannotRunAgainWithANewTimestamp() = fixture { context, store ->
+        val tools = AssistantTools(context, store)
+        val chat = store.chat(store.newChat())!!
+        val request = tools.parse("""create_reminder(title="Jacket", when_text="10 minutes")""")!!
+        val rawKey = tools.callKey(request)
+        val resolvedKey = tools.callKey(tools.normalize(request))
+        assertNull(store.beginTool("uncertain:reminder", resolvedKey, listOf(rawKey)))
+        val result = tools.execute(chat, request, "uncertain:reminder")
+        assertFalse(tools.succeeded(result))
+        assertTrue(result.contains("uncertain"))
+        assertTrue(store.reminders().isEmpty())
+    }
+
+    @Test fun webOffAndProviderFailureCannotReturnSuccess() = fixture { context, store ->
+        var calls = 0
+        val tools = AssistantTools(context, store, webSearch = { calls++; throw java.io.IOException("Fixture network failure") })
+        val chat = store.chat(store.newChat())!!
+        val request = tools.parse("web_search('Ottawa')")!!
+        assertTrue(runCatching { tools.execute(chat, request) }.isFailure)
+        assertEquals(0, calls)
+        store.setChatFlag(chat.id, "web", true)
+        val error = runCatching { tools.execute(chat, request) }.exceptionOrNull()!!
+        assertFalse(tools.succeeded(tools.failure(error as Exception)))
+        assertEquals(1, calls)
+    }
+
+    @Test fun invalidFieldsAndUnknownToolsAreRejectedBeforeInferenceOrWrites() = fixture { context, store ->
+        val tools = AssistantTools(context, store)
+        val engine = ScriptedEngine()
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), Chat(0, "Test", false, false), false, YouProfile(), "Save a note")
+            listOf("create_note(title='A')", "create_note(title='A',body=3)", "create_note(title='A',body='B',extra=true)",
+                "delete_note(id=1.5,version=1)", "delete_note(id=0,version=1)", "unknown_tool()", "create_note(title='A',title='B',body='C')",
+                "create_note(title='A',body='unfinished", "create_note(title='A',body='B'); delete_note(id=1,version=1)").forEach {
+                assertTrue(it, runCatching { runtime.parseAction(it, "Save a note", emptyList(), tools) }.isFailure)
+            }
+            assertEquals(0, engine.forcedCalls)
+            assertTrue(store.notes().isEmpty())
+        } finally { runtime.release() }
+    }
+
+    @Test fun legacyRepairCannotSwitchToolsAndOnlyRunsOnce() = fixture { context, store ->
+        val tools = AssistantTools(context, store)
+        val engine = ScriptedEngine("""[tool]{"name":"create_note","arguments":{"title":"A","body":"B"}}[/tool]""")
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), Chat(0, "Test", false, false), false, YouProfile(), "Create a note")
+            assertNotNull(runtime.parseAction("[create_note]title: A, body: B[/create_note]", "Create a note", emptyList(), tools))
+            assertTrue(runCatching { runtime.parseAction("[create_note]title: A, body: B[/create_note]", "Create a note", emptyList(), tools) }.isFailure)
+            assertEquals(1, engine.forcedCalls)
+            assertTrue(store.notes().isEmpty())
+        } finally { runtime.release() }
+        val changedEngine = ScriptedEngine("""[tool]{"name":"create_reminder","arguments":{"title":"A","when_text":"10 minutes"}}[/tool]""")
+        val changed = AssistantRuntime(context, store, changedEngine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        try {
+            changed.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), Chat(0, "Test", false, false), false, YouProfile(), "Create a note")
+            assertTrue(runCatching { changed.parseAction("[create_note]title: A, body: B[/create_note]", "Create a note", emptyList(), tools) }.isFailure)
+            assertTrue(store.reminders().isEmpty())
+        } finally { changed.release() }
+    }
+
+    @Test fun scheduledAvailabilityStillAppliesAfterNormalizingAlternateFormats() = fixture { context, store ->
+        val tools = AssistantTools(context, store, scheduledModelPath = "test-model")
+        val chat = Chat(0, "Scheduled", false, false)
+        val note = tools.parse("create_note(title='Scheduled',body='Saved locally')")!!
+        assertTrue(tools.succeeded(tools.execute(chat, note, "schedule:test")))
+        listOf("web_search('Ottawa')", "delete_note(id=1,version=1)", "mcp_call(server='x',tool='y',arguments={})").forEach {
+            assertTrue(it, runCatching { tools.execute(chat, tools.parse(it)!!, "schedule:test") }.isFailure)
+        }
+        assertEquals(1, store.notes().size)
+    }
+
+    @Test fun replyRecoveryCannotDispatchAnotherActionOrInventAReceipt() = fixture { context, store ->
+        val tools = AssistantTools(context, store)
+        val engine = ScriptedEngine("create_note(title='Unexpected',body='Do not save')")
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        try {
+            val chat = store.chat(store.newChat())!!
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), chat, false, YouProfile(), "Find notes")
+            val result = tools.execute(chat, tools.parse("search_notes(query='Packing')")!!)
+            assertEquals(EMPTY_REPLY_FALLBACK, runtime.recoverTextAnswer("Find notes", listOf(result)))
+            assertTrue(store.notes().isEmpty())
+            assertTrue(tools.confirmedResults(listOf(result, tools.failure(IllegalStateException("Failed write"))))!!.contains("No matching"))
+            assertFalse(tools.confirmedResults(listOf(result, tools.failure(IllegalStateException("Failed write"))))!!.contains("Failed write"))
+            assertNull(tools.confirmedResults(listOf(tools.failure(IllegalStateException("Failed write")))))
+        } finally { runtime.release() }
+    }
+
+    @Test fun inventedReminderTimeRequiresClarificationWithoutRepairOrExecution() = fixture { context, store ->
+        val tools = AssistantTools(context, store)
+        val engine = ScriptedEngine()
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        try {
+            val chat = store.chat(store.newChat())!!
+            val original = "Set a reminder to bring a jacket"
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), chat, false, YouProfile(), original)
+            listOf("create_reminder(title='Jacket', when_text='tomorrow at 10 AM')",
+                "create_reminder(title='Jacket')", "create_reminder(title='Jacket', when_iso='2099-01-01T10:00:00Z')").forEach { call ->
+                assertTrue(call, runCatching { runtime.parseAction(call, original, emptyList(), tools) }.exceptionOrNull() is ToolDetailsRequiredException)
+            }
+            assertNotNull(runtime.parseAction("create_reminder(title='Jacket', when_text='10 minutes')", "$original in 10 minutes", emptyList(), tools))
+            assertEquals(0, engine.forcedCalls)
+            assertTrue(store.reminders().isEmpty())
+        } finally { runtime.release() }
+    }
+
+    @Test fun everyCatalogToolRetainsItsTypedArgumentsAfterDecoding() = fixture { context, store ->
+        val tools = AssistantTools(context, store)
+        ToolCatalog.definitions.forEach { definition ->
+            val arguments = org.json.JSONObject()
+            definition.fields.forEach { field -> arguments.put(field.name, when (field.type) {
+                "integer" -> 7
+                "object" -> org.json.JSONObject("""{"nested":{"text":"a,b(c)","flags":[true,null,3]}}""")
+                else -> field.choices.firstOrNull() ?: "Example value"
+            }) }
+            val envelope = org.json.JSONObject().put("name", definition.name).put("arguments", arguments)
+            listOf("[tool]$envelope[/tool]", "${definition.name}($arguments)").forEach { text ->
+                val parsed = tools.parse(text)!!
+                assertEquals(definition.name, parsed.name)
+                assertEquals(tools.callKey(ToolRequest(definition.name, arguments)), tools.callKey(parsed))
+                assertEquals(definition.kind == ToolKind.WRITE, tools.needsConfirmation(parsed))
+            }
+        }
+        assertTrue(store.notes().isEmpty())
+        assertTrue(store.reminders().isEmpty())
     }
 }
