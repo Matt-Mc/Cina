@@ -1,5 +1,9 @@
 package dev.pocketmuse
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,6 +21,7 @@ import androidx.compose.ui.unit.sp
 @Composable
 internal fun NotesScreen(vm: AssistantViewModel) {
     val notes by vm.notes.collectAsState()
+    val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri -> if(uri != null) vm.exportNotes(uri) }
     var query by rememberSaveable { mutableStateOf("") }
     var editorOpen by rememberSaveable { mutableStateOf(false) }
     var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -28,6 +33,7 @@ internal fun NotesScreen(vm: AssistantViewModel) {
             Text("${notes.size} saved on this phone", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
             TextButton(onClick = { editingId = null; title = ""; body = ""; editorOpen = true }) { Text("+ New note") }
         }
+        if (notes.isNotEmpty()) TextButton(onClick = { export.launch("cina-notes.md") }) { Text("Export notes") }
         if (notes.isNotEmpty()) OutlinedTextField(query, { query = it }, label = { Text("Search notes") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         val filtered = notes.filter { query.isBlank() || it.title.contains(query, true) || it.body.contains(query, true) }
         if (notes.isEmpty()) EmptyState("Keep a thought", "Write a note here, ask Cina to save one in chat, or use the Quick Note widget.")
@@ -41,7 +47,7 @@ internal fun NotesScreen(vm: AssistantViewModel) {
                 }
                 var menu by remember { mutableStateOf(false) }
                 Box {
-                    TextButton(onClick = { menu = true }) { Text("⋯") }
+                    TextButton(onClick = { menu = true }, modifier = Modifier.semantics { contentDescription = "Options for ${note.title}" }) { Text("⋯") }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; deleting = note })
                     }

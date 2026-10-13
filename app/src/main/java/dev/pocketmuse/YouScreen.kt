@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val dark = Color(0xFF26312C)
-private val quiet = Color(0xFF767E78)
+private val quiet = Color(0xFF58665E)
 private val wash = Color(0xFFF0F2EC)
 private val border = Color(0xFFE7E9E2)
 
@@ -119,7 +119,7 @@ fun CompanionSettings(profile: YouProfile, onSave: (YouProfile) -> Unit) {
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Show companion in the app", Modifier.weight(1f), color = dark)
-            Switch(draft.showPet, { draft = draft.copy(showPet = it) })
+            Switch(draft.showPet, { draft = draft.copy(showPet = it) }, modifier = Modifier.semantics { contentDescription = "Show companion in the app" })
         }
         TextButton(onClick = { draft = draft.copy(petColor = 0, petCustomColor = "", petEyes = 0,
             petHat = 0, petMouth = 0, petAccessory = 0, petBlush = true) }) { Text("Reset appearance") }

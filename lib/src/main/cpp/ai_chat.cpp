@@ -5,6 +5,8 @@
 #include <string>
 #include <unistd.h>
 #include <sampling.h>
+#include <regex>
+#include "json-schema-to-grammar.h"
 
 #include "logging.h"
 #include "chat.h"
@@ -41,6 +43,28 @@ static common_sampler                   * g_sampler;
 static bool g_enable_thinking = true;
 static bool g_thinking_supported = false;
 static bool g_return_thinking_prefix = false;
+static std::string g_action_grammar;
+static bool g_force_action = false;
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_arm_aichat_internal_InferenceEngineImpl_configureToolSchema(JNIEnv *env, jobject, jstring schema, jboolean force) {
+    const auto *raw = env->GetStringUTFChars(schema, nullptr);
+    if (!raw) return false;
+    const std::string value(raw);
+    env->ReleaseStringUTFChars(schema, raw);
+    try {
+        const auto grammar = json_schema_to_grammar(common_json::parse(value));
+        g_action_grammar = "root ::= \"[tool]\" action-root \"[/tool]\"\n" +
+            std::regex_replace(grammar, std::regex("\\broot\\b"), "action-root");
+        g_force_action = force;
+        return true;
+    } catch (const std::exception &error) {
+        g_action_grammar.clear();
+        LOGe("Action grammar failed: %s", error.what());
+        return false;
+    }
+}
 
 extern "C"
 JNIEXPORT jboolean JNICALL
@@ -149,6 +173,11 @@ static llama_context *init_context(llama_model *model, const int n_ctx = DEFAULT
 static common_sampler *new_sampler(float temp) {
     common_params_sampling sparams;
     sparams.temp = temp;
+    if (!g_action_grammar.empty()) {
+        sparams.grammar = common_grammar(COMMON_GRAMMAR_TYPE_USER, g_action_grammar);
+        sparams.grammar_lazy = !g_force_action;
+        sparams.grammar_triggers.push_back({COMMON_GRAMMAR_TRIGGER_TYPE_WORD, "[tool]"});
+    }
     return common_sampler_init(g_model, sparams);
 }
 
@@ -162,6 +191,7 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_prepare(JNIEnv * /*env*/, jobje
     g_chat_templates = common_chat_templates_init(g_model, "");
     g_thinking_supported = false;
     g_enable_thinking = true;
+    g_action_grammar.clear();
     g_sampler = new_sampler(DEFAULT_SAMPLER_TEMP);
     return 0;
 }
@@ -416,6 +446,7 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processSystemPrompt(
         jstring jsystem_prompt
 ) {
     // Reset long-term & short-term states
+    g_action_grammar.clear();
     reset_long_term_states();
     reset_short_term_states();
 
@@ -467,6 +498,14 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
 ) {
     // Reset short-term states
     reset_short_term_states();
+    try {
+        auto *next_sampler = new_sampler(DEFAULT_SAMPLER_TEMP);
+        common_sampler_free(g_sampler);
+        g_sampler = next_sampler;
+    } catch (const std::exception &error) {
+        LOGe("Action sampler failed: %s", error.what());
+        return 4;
+    }
 
     // Obtain and tokenize user prompt
     const auto *const user_prompt = env->GetStringUTFChars(juser_prompt, nullptr);
@@ -561,8 +600,14 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
     }
 
     // Sample next token
-    const auto new_token_id = common_sampler_sample(g_sampler, g_context, -1);
-    common_sampler_accept(g_sampler, new_token_id, true);
+    llama_token new_token_id;
+    try {
+        new_token_id = common_sampler_sample(g_sampler, g_context, -1);
+        common_sampler_accept(g_sampler, new_token_id, true);
+    } catch (const std::exception &error) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), error.what());
+        return nullptr;
+    }
 
     // Populate the batch with new token, then decode
     common_batch_clear(g_batch);
@@ -610,7 +655,7 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, jobject /*unused*/) {
     // Reset long-term & short-term states
-    reset_long_term_states();
+    if (g_context) reset_long_term_states();
     reset_short_term_states();
 
     // Free up resources
@@ -619,6 +664,11 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, job
     llama_batch_free(g_batch);
     llama_free(g_context);
     llama_model_free(g_model);
+    g_sampler = nullptr;
+    g_batch = {};
+    g_context = nullptr;
+    g_model = nullptr;
+    g_action_grammar.clear();
 }
 
 extern "C"

@@ -30,6 +30,13 @@ internal object ScheduledTaskScheduler {
     }
 
     fun cancel(context: Context, id: Long) { WorkManager.getInstance(context).cancelAllWorkByTag(tag(id)) }
+    fun runNow(context: Context, task: ScheduledTask, retry: Boolean = false) {
+        val run = if (retry) task.lastRunMillis ?: System.currentTimeMillis() else System.currentTimeMillis()
+        val request = OneTimeWorkRequestBuilder<ScheduledTaskWorker>()
+            .setInputData(workDataOf("task_id" to task.id, "run_ms" to task.nextRunMillis, "manual" to true, "execution_ms" to run))
+            .addTag(tag(task.id)).build()
+        WorkManager.getInstance(context).enqueueUniqueWork("${tag(task.id)}-manual", ExistingWorkPolicy.KEEP, request)
+    }
     private fun tag(id: Long) = "cina-scheduled-$id"
 
     fun nextRun(previous: Long, repeat: String): Long? {
@@ -44,36 +51,40 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
     override suspend fun doWork(): Result {
         val id = inputData.getLong("task_id", -1)
         val scheduledFor = inputData.getLong("run_ms", -1)
+        val manual = inputData.getBoolean("manual", false)
+        val executionTime = inputData.getLong("execution_ms", scheduledFor)
         val store = LocalStore(applicationContext)
         try {
             val task = store.scheduledTask(id) ?: return Result.success()
-            if (!task.enabled || task.nextRunMillis != scheduledFor) return Result.success()
+            if ((!manual && !task.enabled) || task.nextRunMillis != scheduledFor) return Result.success()
+            store.setScheduledRunning(id, scheduledFor, true)
             val outcome = runCatching {
                 val model = store.models().firstOrNull { it.path == task.modelPath }
                     ?: error("The selected model is no longer on this phone.")
                 ModelAccess.mutex.withLock {
                     val tools = AssistantTools(applicationContext, store, scheduledModelPath = task.modelPath)
-                    val runtime = AssistantRuntime(applicationContext, store) { webEnabled -> tools.specification(webEnabled) }
+                    val runtime = AssistantRuntime(applicationContext, store) { web, request, recent, files -> tools.specification(web, request, recent, files) }
                     val chat = Chat(0, task.title, false, false)
                     try {
                         withTimeout(8 * 60 * 1000L) {
                             runtime.use(model, chat,
                                 applicationContext.getSharedPreferences("settings", 0).getBoolean("memory", true),
-                                YouProfileStore(applicationContext).read())
+                                YouProfileStore(applicationContext).read(), task.prompt, executionScope = "scheduled:$id:$executionTime")
                             var answer = splitModelResponse(runtime.generate(task.prompt) {}).answer
                             val executedCalls = mutableListOf<String>()
                             val results = mutableListOf<String>()
                             suspend fun finish(raw: String): String = if (hasFinalAnswer(raw)) raw
                                 else runtime.recoverTextAnswer(task.prompt, results)
-                            repeat(3) {
+                            repeat(20) {
                                 val request = tools.parse(answer) ?: return@withTimeout finish(answer)
                                 val key = tools.callKey(request)
                                 val blocked = ToolTurnPolicy.blockReason(key, tools.needsConfirmation(request), executedCalls, 3)
                                 require(blocked == null) { blocked.orEmpty() }
                                 executedCalls.add(key)
-                                val result = try { tools.execute(chat, request) }
+                                val result = try { tools.execute(chat, request, "scheduled:$id:$executionTime") }
                                     catch (e: CancellationException) { throw e }
-                                    catch (e: Exception) { "Tool error: ${e.message}" }
+                                    catch (e: Exception) { tools.failure(e) }
+                                require(tools.succeeded(result)) { tools.resultMessage(result) }
                                 results.add("${request.name}: ${result.take(1200)}")
                                 answer = splitModelResponse(runtime.generate(
                                     AssistantPrompt.toolFollowUp(task.prompt, request.name, result)
@@ -85,13 +96,16 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                     } finally { runtime.release() }
                 }
             }
-            if (outcome.exceptionOrNull() is CancellationException) throw outcome.exceptionOrNull()!!
+            if (outcome.exceptionOrNull() is CancellationException) {
+                store.setScheduledRunning(id, scheduledFor, false)
+                throw outcome.exceptionOrNull()!!
+            }
             val next = ScheduledTaskScheduler.nextRun(scheduledFor, task.repeat)
             val error = outcome.exceptionOrNull()?.message?.take(300) ?: if (outcome.isFailure) "The model could not run." else null
-            store.finishScheduledTask(id, scheduledFor, outcome.getOrNull(), error, next)
+            store.finishScheduledTask(id, scheduledFor, outcome.getOrNull(), error, next, manual, executionTime)
             TodayWidget.updateAll(applicationContext)
             val updated = store.scheduledTask(id)
-            if (updated?.enabled == true && updated.nextRunMillis == next) ScheduledTaskScheduler.schedule(applicationContext, updated)
+            if (!manual && updated?.enabled == true && updated.nextRunMillis == next) ScheduledTaskScheduler.schedule(applicationContext, updated)
             showNotification(task, outcome.getOrNull(), error)
             return Result.success()
         } finally { store.close() }

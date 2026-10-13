@@ -1,0 +1,15 @@
+
+dev.pocketmuse.ActionApprovalTest:..
+dev.pocketmuse.MarkdownResponseTest:..
+dev.pocketmuse.MemoryPersistenceTest:..
+dev.pocketmuse.MemoryProcessorTest:.
+dev.pocketmuse.NativeToolGrammarTest:.
+dev.pocketmuse.NavigationTest:.....
+dev.pocketmuse.ReminderNavigationTest:.
+dev.pocketmuse.ScheduledNavigationTest:.
+dev.pocketmuse.SkillStoreTest:.....
+dev.pocketmuse.UsabilityPersistenceTest:.......
+
+Time: 27.243
+
+OK (27 tests)

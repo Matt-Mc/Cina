@@ -10,10 +10,9 @@ allows search; it does not require search. Search should support an answer rathe
 than replace it with a list of apps or resources. Tool follow-ups repeat the
 original request so Cina keeps working toward it.
 
-The prompt includes examples and separates assistant policy from contextual data.
-The tool specification hides web_search when Web is off. Execution still rejects
-web calls when disabled. Scheduled tasks retain their existing local tool allowlist.
-Approval checks and tool limits are unchanged.
+The base prompt uses seven short rules. Trusted response preferences are separate from source data. One typed catalog supplies selected instructions, validation, labels, and action schemas. Selection includes recent user requests and file presence; scheduled work always receives its complete local allowlist and the actual scheduled request. Web and memory execution are still checked against current settings.
+
+The native sampler applies a lazy grammar when `[tool]` begins, constraining JSON names, field types, required fields, and the closing marker. One malformed attempted action may receive a forced-format repair (30-second limit). Repaired values still require validation and action approval. Syntax constraints do not establish intent, correct arguments, or a model's ability to request an action.
 
 ## Device evaluation
 
@@ -42,32 +41,15 @@ instructions improve a particular small model.
 
 ## Repeated tool calls
 
-Each interactive turn allows at most three calls, or eight for an active goal.
-The budget and attempted call keys survive approval pauses. Equivalent argument
-objects share a key even if their JSON property order differs. Repeated writes
-are blocked anywhere in the turn. Identical consecutive reads are also blocked;
-a read may run again after an intervening change.
+Discovery allows four calls, reading allows eight, and writes allow three (eight for Deep or a goal), with an overall twenty-call bound. Call keys are canonical, so JSON field order does not change identity. Repeated writes in a turn and consecutive identical reads stop the loop.
 
-At the budget, on a repeated call, or on malformed follow-up syntax, Cina clears
-the live preview and makes one text-only recovery attempt in a fresh model
-conversation. It supplies the original request and the attempted results without
-the tool catalog. This can reload the model and take extra time. Recovery is
-limited to 60 seconds. No tool output from recovery is executed. Scheduled tasks
-stop repeated calls as a task error rather than taking duplicate actions.
+Turns, pending approvals, action receipts, and full-note read coverage are stored in SQLite. A retry retains its original execution scope even after a goal pauses. Exact successful writes return their stored result. A receipt without a result is uncertain and cannot be replayed. New writes in a retry that has prior actions require approval. This does not provide semantic deduplication of differently worded actions, or prove the outcome of a timed-out external request; users must inspect uncertain outcomes.
 
-Device regressions to check:
-
-- Ask to plan a week with Web on. Expect a question or a draft, without a saved note.
-- Force repeated create_note calls in a test session. Expect one execution for the
-  same arguments, including across approval pauses, followed by text recovery.
-- Run three distinct requested actions. Expect no fourth execution.
-- Confirm tool prefixes never remain visible after the completed answer, even
-  while memory extraction is running.
-- Stop during recovery. Expect cancellation and a clean next turn.
+Errors and exhausted budgets become persistent Retry/Edit cards. Empty or reasoning-only answers receive the separate text-only recovery below. Scheduled runs use receipts per execution, their complete tool catalog, and the same separate budgets. Manual retry reuses the failed run's scope.
 
 ## Empty-answer recovery
 
-A completed generation is accepted as a reply only when its answer (outside optional thinking blocks) contains text and is not a tool prefix. Empty output, closed or unclosed thinking-only output, and incomplete tool prefixes trigger one fresh text-only attempt. Chat passes the original request and actual tool results, clears the old preview, and never executes recovery output as a tool. The recovery has a 60-second limit and cannot recursively retry. Cancellation propagates; failure, timeout, or another empty response yields a fixed visible fallback. Scheduled responses use the same recovery and retain their overall eight-minute run limit. The final persistence guard also rejects reasoning-only messages.
+A completed generation is accepted as a reply only when its answer (outside optional thinking blocks) contains text and is not a tool prefix. Empty output, closed or unclosed thinking-only output, and incomplete tool prefixes trigger one fresh text-only attempt. Chat passes the original request and actual tool results, clears the old preview, and never executes recovery output as a tool. The recovery has a 60-second limit and cannot recursively retry. Cancellation propagates; failure, timeout, or another empty response yields a persistent Retry/Edit state in chat and an actionable error for scheduled work. Scheduled responses use the same recovery and retain their overall eight-minute run limit. The final persistence guard also rejects reasoning-only messages.
 
 Device checks: try the reported Qwen3-0.6B planning request after a tool error; verify a final question or explicit fallback appears. Check ordinary text replies and successful tool replies are not retried. Force a thinking-only initial reply and a thinking-only recovery, stop during recovery, and verify there is no extra tool execution or retry loop. Recovery resets conversation state while retaining model weights; it can still add latency. These changes address missing replies; they do not guarantee the model chooses the right tool.
 

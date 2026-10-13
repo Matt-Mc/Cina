@@ -19,7 +19,8 @@ internal fun ColumnScope.MemoryContent(vm: AssistantViewModel, onOpenChat: () ->
     val stalled by vm.stalledMemories.collectAsState()
     var editing by remember { mutableStateOf<Memory?>(null) }; var draft by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("Remember useful details", Modifier.weight(1f), color = Ink); Switch(enabled, onCheckedChange = vm::setMemoryEnabled) }
+        SettingToggle("Memory", "Use saved details and suggest new ones from your messages.", enabled, vm::setMemoryEnabled)
+        Text("Every suggested detail needs your review before it helps future chats. Cina stores facts on this phone. Temporary details expire. Turning Memory off stops collection and use; it does not delete saved details.", color = Muted, fontSize = 13.sp)
         HorizontalDivider(color = Line)
         if(stalled > 0) {
             Text("$stalled message(s) could not be checked for memory after three attempts.", color = Muted, fontSize = 12.sp)
@@ -27,14 +28,22 @@ internal fun ColumnScope.MemoryContent(vm: AssistantViewModel, onOpenChat: () ->
         }
         if (suggestions.isNotEmpty()) SectionTitle("Suggested memories")
         suggestions.forEach { suggestion ->
+            var replacement by remember(suggestion.id) { mutableStateOf(suggestion.replacesId) }
+            var chooseReplacement by remember(suggestion.id) { mutableStateOf(false) }
             Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(14.dp)).padding(12.dp)) {
                 Text(suggestion.fact, color = Ink)
                 suggestion.replacesId?.let { id -> memories.firstOrNull { it.id == id }?.let { old -> Text("Replaces: ${old.fact}", color = Muted, fontSize = 12.sp) } }
                 TextButton(onClick = { vm.openChat(suggestion.sourceChatId); onOpenChat() }) { Text("Open source chat") }
-                Row { TextButton(onClick = { vm.approveMemory(suggestion.id) }) { Text("Remember") }; TextButton(onClick = { vm.dismissMemory(suggestion.id) }) { Text("Dismiss") } }
+                if (memories.isNotEmpty()) TextButton(onClick = { chooseReplacement = !chooseReplacement }) { Text(if (replacement == null) "Replace an existing detail…" else "Change replacement…") }
+                if (chooseReplacement) {
+                    TextButton(onClick = { replacement = null; chooseReplacement = false }) { Text("Keep as a separate detail") }
+                    memories.forEach { old -> TextButton(onClick = { replacement = old.id; chooseReplacement = false }) { Text(old.fact) } }
+                }
+                replacement?.let { id -> memories.firstOrNull { it.id == id }?.let { Text("Will replace: ${it.fact}", color = Muted) } }
+                Row { TextButton(onClick = { vm.approveMemory(suggestion.id, replacement) }) { Text("Remember") }; TextButton(onClick = { vm.dismissMemory(suggestion.id) }) { Text("Dismiss") } }
             }
         }
-        if(memories.isEmpty()) EmptyState("Keep useful details", "Ordinary details save automatically with Undo in chat. Sensitive details are proposed for review. Temporary plans stop informing replies after their relevance cutoff.")
+        if(memories.isEmpty()) EmptyState("Keep useful details", "Review suggested details here, or explicitly ask Cina to remember something in chat.")
         memories.forEach { memory ->
             Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(memory.fact, color = Ink, fontSize = 15.sp, lineHeight = 22.sp)

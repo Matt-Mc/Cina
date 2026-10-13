@@ -102,6 +102,11 @@ internal class InferenceEngineImpl private constructor(
     override suspend fun contextCapacity(): Int = withContext(llamaDispatcher) { nativeContextCapacity() }
 
     private external fun configureThinking(enabled: Boolean): Boolean
+    private external fun configureToolSchema(schema: String, force: Boolean): Boolean
+    override suspend fun setToolSchema(schema: String, force: Boolean): Unit = withContext(llamaDispatcher) {
+        check(_state.value is InferenceEngine.State.ModelReady)
+        check(configureToolSchema(schema, force)) { "Could not prepare action formatting for this model." }
+    }
 
     override suspend fun setThinking(enabled: Boolean): Boolean = withContext(llamaDispatcher) {
         check(_state.value is InferenceEngine.State.ModelReady)
@@ -256,7 +261,7 @@ internal class InferenceEngineImpl private constructor(
             processUserPrompt(message, predictLength).let { result ->
                 if (result != 0) {
                     Log.e(TAG, "Failed to process user prompt: $result")
-                    return@flow
+                    throw IllegalStateException("The model could not process this request (code $result).")
                 }
             }
 
@@ -323,6 +328,7 @@ internal class InferenceEngineImpl private constructor(
 
                 is InferenceEngine.State.Error -> {
                     Log.i(TAG, "Resetting error states...")
+                    unload()
                     _state.value = InferenceEngine.State.Initialized
                     Log.i(TAG, "States reset!")
                     Unit

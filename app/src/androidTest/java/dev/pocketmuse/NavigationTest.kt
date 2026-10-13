@@ -22,12 +22,12 @@ class NavigationTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun responseModesAndLocalTimingsAreAccessible() {
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithText("Responses").performClick()
         compose.onNodeWithText("Quick").performClick().assertIsSelected()
         compose.onNodeWithText("Deep").performClick().assertIsSelected()
         compose.onNodeWithText("Auto").performClick().assertIsSelected()
-        compose.onNodeWithContentDescription("Open menu").performClick()
-        compose.onNodeWithText("Settings").performClick()
-        compose.onNodeWithText("Response mode").assertIsDisplayed()
         compose.onNodeWithText("Response timings", substring = true).performClick()
         compose.onNodeWithText("Local response timings").assertIsDisplayed()
     }
@@ -57,12 +57,14 @@ class NavigationTest {
     }
 
     @Test fun draftsStayWithTheirOwnConversation() {
+        // Start from a fresh chat so earlier test runs cannot change which row contains this draft.
+        compose.onNodeWithContentDescription("New chat").performClick()
         val draft = "Keep this thought in this chat"
         compose.onNodeWithContentDescription("Message Cina").performTextInput(draft)
         compose.onNodeWithContentDescription("New chat").performClick()
         compose.onAllNodesWithText(draft).assertCountEquals(0)
         compose.onNodeWithText("New chat ⌄").performClick()
-        compose.onAllNodesWithText("Open")[1].performClick()
+        compose.onAllNodesWithText("New chat", substring = false)[0].performClick()
         compose.onNodeWithText(draft).assertIsDisplayed()
     }
 
@@ -71,7 +73,7 @@ class NavigationTest {
         compose.onNodeWithText("You").performClick()
         compose.onNodeWithText("About you").assertIsSelected()
         compose.onAllNodesWithText("Memory")[0].performClick()
-        compose.onNodeWithText("Remember useful details").assertIsDisplayed()
+        compose.onNodeWithText("Every suggested detail needs your review", substring = true).assertIsDisplayed()
     }
 }
 

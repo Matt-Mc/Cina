@@ -104,9 +104,10 @@ class McpConnections(context: Context, private val secrets: SecretStore) {
         prefs.edit().putBoolean(id, false).apply()
     }
 
-    fun refreshEnabled() {
+    fun refreshEnabled(onState: (String, String) -> Unit = { _, _ -> }) {
         allPresets().filter { prefs.getBoolean(it.id, false) }.forEach { preset ->
-            try { connect(preset.id) } catch (_: Exception) { tools.remove(preset.id) }
+            onState(preset.id, "Connecting…")
+            try { val count = connect(preset.id); onState(preset.id, "Connected · $count tools") } catch (e: Exception) { tools.remove(preset.id); onState(preset.id, "Could not connect: ${e.message}") }
         }
     }
 

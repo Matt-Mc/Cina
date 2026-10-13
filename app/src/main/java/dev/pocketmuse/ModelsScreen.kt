@@ -2,9 +2,11 @@ package dev.pocketmuse
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,6 +23,8 @@ internal fun ModelsScreen(vm: AssistantViewModel) {
     val download by vm.download.collectAsState(); val benchmarks by vm.benchmarks.collectAsState()
     val benchmarking by vm.benchmarking.collectAsState(); val busy by vm.busy.collectAsState()
     val resumable by vm.resumable.collectAsState(); val repos by vm.repoResults.collectAsState(); val files by vm.remoteFiles.collectAsState()
+    val phoneBenchmarkProgress by vm.phoneBenchmarkProgress.collectAsState()
+    val popularModels by vm.popularModels.collectAsState(); val popularLoading by vm.popularModelsLoading.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(if (models.isEmpty()) 1 else 0) }
     var query by rememberSaveable { mutableStateOf("") }
     var directUrl by rememberSaveable { mutableStateOf("") }; var directName by rememberSaveable { mutableStateOf("") }
@@ -30,10 +34,28 @@ internal fun ModelsScreen(vm: AssistantViewModel) {
     var access by rememberSaveable { mutableStateOf(false) }
     var viewed by remember { mutableStateOf<LocalModel?>(null) }
     var deleting by remember { mutableStateOf<LocalModel?>(null) }
+    var assignmentRevision by remember { mutableIntStateOf(0) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.import(uri) }
+    LaunchedEffect(tab) { if (tab == 1 && popularModels.isEmpty()) vm.refreshPopularModels() }
     Page("Models", "Choose a mind for Cina. It runs on your phone.") {
         ScreenTabs(listOf("Installed", "Discover"), tab) { tab = it }
         Text("${sizeLabel(vm.library.freeBytes())} free · ${sizeLabel(vm.library.totalRam())} memory", color = Muted, fontSize = 12.sp)
+        if (models.isNotEmpty()) Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionTitle("Find your fit")
+            Text("Measure generation speed and three basic tasks for each installed model. A full run can take a few minutes per model.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Button(onClick = vm::benchmarkPhoneModels, enabled = models.isNotEmpty() && phoneBenchmarkProgress == null && benchmarking == null && !busy && !download.running) {
+                Text(if (phoneBenchmarkProgress != null) "Benchmarking ${phoneBenchmarkProgress!!.first} of ${phoneBenchmarkProgress!!.second}…" else "Benchmark this phone")
+            }
+            phoneBenchmarkProgress?.let { (current, total) ->
+                LinearProgressIndicator(progress = { current.toFloat() / total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth(), color = Accent)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    val currentName = models.firstOrNull { it.path == benchmarking }?.name ?: "Model $current of $total"
+                    Text("$currentName · keep Cina open", Modifier.weight(1f), color = Muted, fontSize = 11.sp)
+                    TextButton(onClick = vm::cancelPhoneBenchmark) { Text("Stop") }
+                }
+            }
+            if (models.isEmpty()) Text("Install a model first to measure its speed. You can browse popular models in Discover.", color = Muted, fontSize = 12.sp)
+        }
         if (download.running) {
             Text("Downloading ${download.name}", color = Ink)
             LinearProgressIndicator(progress = { (download.received.toFloat() / download.total.coerceAtLeast(1)).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth(), color = Accent)
@@ -44,11 +66,25 @@ internal fun ModelsScreen(vm: AssistantViewModel) {
         if (resumable != null && !download.running) Button(onClick = { vm.download(resumable!!.first, resumable!!.second) }) { Text("Resume ${resumable!!.second}") }
         if (tab == 0) {
             val installedBenchmarks = benchmarks.filter { result -> models.any { it.path == result.modelPath } }
-            val fastest = installedBenchmarks.maxByOrNull { benchmarkTokensPerSecond(it.result) ?: -1.0 }
+            val quickPool = installedBenchmarks.filter { (benchmarkTaskScore(it.result) ?: 0) >= 2 }.ifEmpty { installedBenchmarks }
+            val fastest = quickPool.maxByOrNull { benchmarkTokensPerSecond(it.result) ?: -1.0 }
             val best = installedBenchmarks.maxWithOrNull(compareBy<ModelBenchmark> { benchmarkTaskScore(it.result) ?: -1 }.thenBy { benchmarkTokensPerSecond(it.result) ?: 0.0 })
-            if (fastest != null || best != null) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                fastest?.let { result -> Text("Fastest tested: ${models.first { it.path == result.modelPath }.name}", color = Accent, fontSize = 12.sp) }
-                best?.let { result -> Text("Best for Cina checks: ${models.first { it.path == result.modelPath }.name} · ${benchmarkTaskScore(result.result) ?: 0}/3", color = Muted, fontSize = 12.sp) }
+            val assignedQuick = remember(assignmentRevision, models) { vm.assignedModel(ResponseMode.QUICK) }
+            val assignedDeep = remember(assignmentRevision, models) { vm.assignedModel(ResponseMode.DEEP) }
+            if (fastest != null || best != null) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionTitle("Your phone's results")
+                fastest?.let { result ->
+                    val model = models.firstOrNull { it.path == result.modelPath }
+                    if (model != null) ModelRoleRow("Quick", model.name, "${benchmarkTokensPerSecond(result.result)?.let { "%.1f".format(it) } ?: "?"} tokens/s · ${benchmarkTaskScore(result.result) ?: "?"}/3 checks", assignedQuick == model.path) {
+                        vm.assignModel(ResponseMode.QUICK, model.path); assignmentRevision++
+                    }
+                }
+                best?.let { result ->
+                    val model = models.firstOrNull { it.path == result.modelPath }
+                    if (model != null) ModelRoleRow("Deep", model.name, "${benchmarkTaskScore(result.result) ?: "?"}/3 checks · ${benchmarkTokensPerSecond(result.result)?.let { "%.1f".format(it) } ?: "?"} tokens/s", assignedDeep == model.path) {
+                        vm.assignModel(ResponseMode.DEEP, model.path); assignmentRevision++
+                    }
+                }
             }
             if (models.isEmpty()) {
                 EmptyState("Ready when you are", "Download a recommended model or import a GGUF file to chat offline.")
@@ -60,16 +96,43 @@ internal fun ModelsScreen(vm: AssistantViewModel) {
                         Text(model.name, color = Ink, fontWeight = FontWeight.Medium)
                         Text("${sizeLabel(model.bytes)}${if (model.path == selected) " · Selected" else ""}", color = Muted, fontSize = 12.sp)
                     }
-                    TextButton(onClick = { if (model.path != selected) vm.setModel(model.path) else viewed = model }) { Text(if (model.path == selected) "Details" else "Use") }
+                    TextButton(onClick = { if (model.path != selected) vm.setModel(model.path) else viewed = model }, enabled = benchmarking == null && !busy) { Text(if (model.path == selected) "Details" else "Use") }
                 }
                 HorizontalDivider(color = Line)
             }
             TextButton(onClick = { adding = true }) { Text("+ Add model") }
         } else {
-            SectionTitle("Recommended for your phone")
-            CuratedModels.entries.forEach { remote ->
-                PaperRow(remote.name, vm.library.suitability(remote.size), if (models.any { it.source == remote.url }) "Installed" else "Get") {
-                    if (models.none { it.source == remote.url }) vm.download(remote.url, remote.name)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    SectionTitle("Models people use")
+                    Text("Live list, ranked by downloads. Single-file GGUF options are checked against this phone's memory.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+                }
+                TextButton(onClick = vm::refreshPopularModels, enabled = !popularLoading) { Text(if (popularLoading) "Loading…" else "Refresh") }
+            }
+            if (popularLoading && popularModels.isEmpty()) LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Accent)
+            val suitableFiles = popularModels.flatMap { popular -> popular.files.map { popular to it } }
+                .filter { (_, file) -> file.size > 0 && vm.library.suitability(file.size).startsWith("Likely suitable") }
+            val quickLimit = minOf(1_500_000_000L, vm.library.totalRam() / 3)
+            val quickPick = suitableFiles.filter { (_, file) -> file.size <= quickLimit }
+                .maxWithOrNull(compareBy<Pair<PopularGgufModel, RemoteModel>> { it.first.downloads }.thenBy { it.second.size })
+            val deepPool = suitableFiles.filter { (_, file) -> quickPick == null || (file.repo != quickPick.second.repo && file.size >= quickPick.second.size) }
+            val deepPick = deepPool.maxWithOrNull(compareBy<Pair<PopularGgufModel, RemoteModel>> { it.first.downloads }.thenBy { it.second.size })
+                ?: suitableFiles.maxWithOrNull(compareBy<Pair<PopularGgufModel, RemoteModel>> { it.first.downloads }.thenBy { it.second.size })
+            quickPick?.let { (popular, file) ->
+                RemoteRoleCard(if(models.isEmpty()) "Start here" else "Quick pick", popular, file, "Smaller download for everyday replies. Based on size and popularity; test its actions on this phone.") {
+                    vm.download(file.url, file.name, ResponseMode.QUICK)
+                }
+            }
+            deepPick?.takeIf { models.isNotEmpty() }?.let { (popular, file) ->
+                RemoteRoleCard("Deep pick", popular, file, "A popular model that fits the memory available here.") {
+                    vm.download(file.url, file.name, ResponseMode.DEEP)
+                }
+            }
+            if (popularModels.isNotEmpty()) Text("These picks use Hugging Face downloads and this phone's memory. Model speed is measured after download with the benchmark above.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
+            if (popularModels.isEmpty() && !popularLoading) Text("Popular models could not be loaded. Check your connection and refresh, or search Hugging Face below.", color = Muted, fontSize = 12.sp)
+            popularModels.forEach { popular ->
+                PaperRow(popular.repo, "${countLabel(popular.downloads)} downloads · ${countLabel(popular.likes)} likes · ${popular.files.size} single-file options", "Files") {
+                    vm.openRepo(popular.repo)
                 }
             }
             TextButton(onClick = { showSearch = !showSearch }) { Text(if (showSearch) "Hide Hugging Face search" else "Search Hugging Face") }
@@ -79,7 +142,9 @@ internal fun ModelsScreen(vm: AssistantViewModel) {
                     TextButton(onClick = { vm.searchRepos(query) }, enabled = query.isNotBlank()) { Text("Search") }
                 }
                 repos.forEach { repo -> TextButton(onClick = { vm.openRepo(repo) }) { Text(repo) } }
-                files.forEach { file -> PaperRow(file.name, "${sizeLabel(file.size)} · ${vm.library.suitability(file.size)}", "Get") { vm.download(file.url, file.name) } }
+                files.forEach { file -> PaperRow(file.name, "${sizeLabel(file.size)} · ${vm.library.suitability(file.size)}", if (models.any { it.source == file.url }) "Installed" else "Get") {
+                    if (models.none { it.source == file.url }) vm.download(file.url, file.name)
+                } }
             }
             TextButton(onClick = { adding = true }) { Text("Import a file or add a link") }
         }
@@ -109,19 +174,48 @@ internal fun ModelsScreen(vm: AssistantViewModel) {
                     Text("${benchmarkTokensPerSecond(benchmark.result)?.let { "%.1f".format(it) } ?: "?"} tokens/s · ${benchmarkTaskScore(benchmark.result) ?: "?"}/3 checks", color = Accent)
                     Text(benchmark.result, color = Muted, fontSize = 11.sp)
                 }
-                TextButton(onClick = { vm.runBenchmark(model) }, enabled = benchmarking == null && !busy) { Text(if (benchmarking == model.path) "Testing…" else "Benchmark") }
-                TextButton(onClick = { deleting = model; viewed = null }, enabled = model.path != selected) { Text("Remove model") }
+                TextButton(onClick = { vm.runBenchmark(model) }, enabled = benchmarking == null && !busy && !download.running) { Text(if (benchmarking == model.path) "Testing…" else "Benchmark") }
+                TextButton(onClick = { deleting = model; viewed = null }, enabled = model.path != selected && benchmarking == null && !busy) { Text("Remove model") }
                 if (model.path == selected) Text("Select another model before removing this one.", color = Muted, fontSize = 12.sp)
             } },
-            confirmButton = { TextButton(onClick = { vm.setModel(model.path); viewed = null }) { Text(if (model.path == selected) "Done" else "Use model") } })
+            confirmButton = { TextButton(onClick = { vm.setModel(model.path); viewed = null }, enabled = benchmarking == null && !busy) { Text(if (model.path == selected) "Done" else "Use model") } })
     }
     deleting?.let { model -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("Remove ${model.name}?") },
         confirmButton = { TextButton(onClick = { vm.removeModel(model); deleting = null }) { Text("Remove") } },
         dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } }) }
 }
 
+@Composable
+private fun ModelRoleRow(role: String, name: String, detail: String, assigned: Boolean, onAssign: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("$role · $name", color = Ink, fontWeight = FontWeight.Medium)
+            Text(detail, color = Muted, fontSize = 12.sp)
+        }
+        TextButton(onClick = onAssign, enabled = !assigned) { Text(if (assigned) "In use" else "Use") }
+    }
+    HorizontalDivider(color = Line)
+}
+
+@Composable
+private fun RemoteRoleCard(role: String, popular: PopularGgufModel, model: RemoteModel, detail: String, onGet: () -> Unit) {
+    Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(role, color = Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(popular.repo, color = Ink, fontWeight = FontWeight.Medium)
+        Text(detail, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+        Text("${sizeLabel(model.size)} · ${model.file.substringAfterLast('/')} · ${countLabel(popular.downloads)} downloads", color = Muted, fontSize = 11.sp)
+        Button(onClick = onGet) { Text("Get & use for ${role.removeSuffix(" pick")}") }
+    }
+}
+
 private fun benchmarkTokensPerSecond(result: String): Double? = Regex("\\| tg 64 \\| ([0-9.]+)").find(result)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
 private fun benchmarkTaskScore(result: String): Int? = Regex("Cina task checks: ([0-3])/3").find(result)?.groupValues?.getOrNull(1)?.toIntOrNull()
+
+private fun countLabel(count: Long): String = when {
+    count >= 1_000_000 -> "%.1fM".format(count / 1_000_000.0)
+    count >= 1_000 -> "%.1fK".format(count / 1_000.0)
+    else -> count.toString()
+}
 
 
 internal fun sizeLabel(bytes: Long): String = if(bytes < 0) "Size unknown" else when {

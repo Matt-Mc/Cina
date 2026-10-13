@@ -35,6 +35,8 @@ interface InferenceEngine {
 
     /** Returns false when the model template cannot control thinking. */
     suspend fun setThinking(enabled: Boolean): Boolean
+    /** Constrain only an action beginning with [tool]; ordinary answers stay unconstrained. Reset with the system prompt. */
+    suspend fun setToolSchema(schema: String, force: Boolean = false) {}
 
     /**
      * Sends a user prompt to the loaded model and returns a Flow of generated tokens.

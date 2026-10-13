@@ -27,7 +27,7 @@ class MemoryProcessorTest {
         override fun cleanUp() {}
         override fun destroy() {}
     }
-    @Test fun ordinaryFactsSaveSensitiveFactsWaitAndFailuresRetry() = runBlocking {
+    @Test fun allFactsNeedReviewAndFailuresRetry() = runBlocking {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val file = File(base.cacheDir, "memory-processor-${System.nanoTime()}.db")
         val context = object : ContextWrapper(base) { override fun getDatabasePath(name: String) = file }
@@ -38,12 +38,15 @@ class MemoryProcessorTest {
             val engine = Engine("""{"facts":[{"fact":"User prefers tea","kind":"durable","sensitive":false,"expires":null,"evidence":"I prefer tea"}]}""")
             val processor = MemoryProcessor(store, engine)
             val saved = processor.process()
-            assertEquals(1, saved.size)
-            assertTrue(store.memories().any { it.fact == "User prefers tea" })
+            assertTrue(saved.isEmpty())
+            assertTrue(store.memories().isEmpty())
+            val tea = store.memorySuggestions().single()
+            store.acceptMemorySuggestion(tea.id)
+            val savedTeaId = store.memories().single().id
             assertTrue(store.pendingMemory().isEmpty())
             val correction = store.addMessage(chat, "user", "I now prefer coffee instead of tea")
             store.queueMemory(correction)
-            engine.answer = """{"facts":[{"fact":"User prefers coffee","kind":"durable","sensitive":false,"expires":null,"evidence":"I now prefer coffee","replaces_id":${saved.single()}}]}"""
+            engine.answer = """{"facts":[{"fact":"User prefers coffee","kind":"durable","sensitive":false,"expires":null,"evidence":"I now prefer coffee","replaces_id":${savedTeaId}}]}"""
             assertTrue(processor.process().isEmpty())
             assertTrue(store.memories().any { it.fact == "User prefers tea" })
             val suggestion = store.memorySuggestions().first { it.fact == "User prefers coffee" }
