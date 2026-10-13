@@ -149,6 +149,8 @@ class ToolResponseRecoveryTest {
         LocalStore(context).use { reopened ->
             val resumed = AssistantTools(context, reopened)
             assertEquals(first, resumed.execute(chat, request, "reminder:retry"))
+            val reformatted = resumed.parse("create_reminder(title='Jacket', when_text='In  10 MINUTES')")!!
+            assertEquals(first, resumed.execute(chat, reformatted, "reminder:retry"))
             assertEquals(1, reopened.reminders().size)
             assertEquals(1, reopened.toolHistory("reminder:retry").size)
         }

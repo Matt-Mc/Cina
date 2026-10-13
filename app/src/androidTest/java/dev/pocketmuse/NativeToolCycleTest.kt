@@ -3,12 +3,18 @@ package dev.pocketmuse
 import android.content.ContextWrapper
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Opt-in real Qwen generation through the production runtime, parser, tools and continuation. */
 class NativeToolCycleTest {
@@ -28,6 +34,11 @@ class NativeToolCycleTest {
                 })
                 val runtime = AssistantRuntime(context, store) { web, request, recent, files -> tools.specification(web, request, recent, files) }
                 val model = LocalModel(0, modelFile.name, modelFile.absolutePath, "test", modelFile.length())
+                // Long JNI prompt processing must allow ART to suspend for garbage collection.
+                val collections = AtomicInteger()
+                val gc = launch(Dispatchers.Default) {
+                    while (isActive) { System.gc(); collections.incrementAndGet(); delay(500) }
+                }
                 try {
                     val cases = listOf(
                         "can you search for stores around Ottawa that sell riftbound?" to "web_search",
@@ -89,7 +100,10 @@ class NativeToolCycleTest {
                     if (parsed.isFailure) assertTrue(parsed.exceptionOrNull().toString(), parsed.exceptionOrNull() is ToolDetailsRequiredException)
                     else assertTrue("Missing time must not become an executable reminder", parsed.getOrNull()?.let { !tools.needsConfirmation(it) || runCatching { tools.normalize(it) }.isFailure } != false)
                     evidence.appendText("PASS: missing-time guard\n")
+                    assertTrue(collections.get() > 0)
+                    evidence.appendText("PASS: ${collections.get()} garbage collections during native inference\n")
                 } finally {
+                    gc.cancelAndJoin()
                     store.reminders().forEach { ReminderReceiver.cancel(context, it.id) }
                     runtime.release()
                 }

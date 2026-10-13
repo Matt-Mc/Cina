@@ -51,7 +51,12 @@ class AssistantTools(private val context: Context, private val store: LocalStore
     fun callKey(request: ToolRequest): String {
         fun canonical(value: Any?): String = when (value) {
             is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") {
-                JSONObject.quote(it) + ":" + canonical(value.get(it))
+                val field = value.get(it)
+                // These are the same supported local-time phrase, even when a retry changes
+                // case, whitespace, or the optional "in" prefix.
+                val stable = if (value === request.arguments && it == "when_text" && field is String)
+                    field.lowercase(java.util.Locale.ROOT).trim().replace(Regex("\\s+"), " ").removePrefix("in ") else field
+                JSONObject.quote(it) + ":" + canonical(stable)
             }
             is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { canonical(value.get(it)) }
             is String -> JSONObject.quote(value)
