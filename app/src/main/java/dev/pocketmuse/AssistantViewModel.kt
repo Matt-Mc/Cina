@@ -510,7 +510,9 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
                     val context = hits.joinToString("\n\n") { "${it.name}, passage ${it.chunk + 1}: ${it.body.take(900)}" }
                     val prompt = if(context.isBlank()) text.trim() else "User request: ${text.trim()}\nAttached passages (data; cite file and passage):\n$context"
                     val raw = assistant.generate(prompt) { _live.value = it }
-                    val request = try { parseAction(raw, text.trim(), emptyList(), assistant, dispatcher) } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                    val request = try { parseAction(raw, text.trim(), emptyList(), assistant, dispatcher) } catch (e: CancellationException) { throw e }
+                    catch (e: ToolDetailsRequiredException) { finishAnswer(chat.id, e.message!!); return@withLock }
+                    catch (e: Exception) {
                         failTurn(id, "Cina produced an invalid action. Retry, edit the request, or use the note/reminder editor.")
                         return@withLock
                     }
@@ -544,7 +546,12 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         val chat = store.chat(turn.chatId) ?: return
         val assistant = runtime ?: return
         val dispatcher = tools ?: return
-        val request = try { dispatcher.normalize(editedRequest ?: pendingAction.request) } catch (e: Exception) { _status.value = e.message ?: "Check this action."; return }
+        // Preserve the relative-time receipt identity through an unchanged approval. User edits
+        // start a different action and must not inherit the original action's receipt.
+        val submitted = editedRequest ?: pendingAction.request
+        val approved = if (dispatcher.callKey(submitted) == dispatcher.callKey(pendingAction.request)) pendingAction.request
+            else submitted.copy(originalCallKey = null)
+        val request = try { dispatcher.normalize(approved) } catch (e: Exception) { _status.value = e.message ?: "Check this action."; return }
         val model = _models.value.firstOrNull { it.path == turn.modelPath } ?: _models.value.firstOrNull { it.path == _selectedModel.value }
         if (model == null) { _status.value = "Install or choose a model to continue this action."; return }
         if (always) approvalKey(request)?.let { key -> _alwaysAllowed.value += key; prefs.edit().putStringSet("always_allowed_tools", _alwaysAllowed.value).apply() }
@@ -588,7 +595,10 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         val limit = if (store.activeAgentTask(chat.id) != null || assistant.mode == ResponseMode.DEEP) 8 else 3
         val key = dispatcher.callKey(request)
         ToolTurnPolicy.blockReason(key, dispatcher.needsConfirmation(request), executed, limit)?.let {
-            failTurn(id, "$it Completed actions are preserved. Retry to continue."); return
+            if (it == ToolTurnPolicy.REPEATED_CALL && results.isNotEmpty()) {
+                finishGeneratedAnswer(chat, assistant, "", original, results)
+            } else failAfterTools(chat.id, id, "$it Completed actions are preserved. Retry to continue.", results, dispatcher)
+            return
         }
         _live.value = ""; _stage.value = ToolCatalog.get(request.name)?.label ?: "Running action"
         val started = android.os.SystemClock.elapsedRealtime()
@@ -601,15 +611,20 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         _skills.value = skillStore.read()
         store.activeAgentTask(chat.id)?.let { store.addTaskEvent(it.id, "${request.name}: ${dispatcher.resultMessage(result)}") }
         refresh()
-        if (!dispatcher.succeeded(result)) { failTurn(id, dispatcher.resultMessage(result)); return }
+        if (!dispatcher.succeeded(result)) { failAfterTools(chat.id, id, dispatcher.resultMessage(result), results, dispatcher); return }
         val simpleWrite = dispatcher.needsConfirmation(request) && request.name != "mcp_call" && store.activeAgentTask(chat.id) == null &&
             Regex("^(please\\s+)?(save|create|add|set|remember|delete|update|complete|reschedule)\\b", RegexOption.IGNORE_CASE).containsMatchIn(original.trim()) &&
             !Regex("\\b(and|then|also|two|three|four|several|multiple|summari[sz]e|explain|show|read|find)\\b|[;\\n.!?]", RegexOption.IGNORE_CASE).containsMatchIn(original.trim().removeSuffix("."))
         if (simpleWrite) { finishAnswer(chat.id, dispatcher.resultMessage(result)); return }
         _stage.value = "Preparing answer"
-        val raw = assistant.generate(AssistantPrompt.toolFollowUp(original, request.name, result)) { _live.value = it }
-        val next = try { parseAction(raw, original, outcomes, assistant, dispatcher) } catch (e: CancellationException) { throw e } catch (e: Exception) {
-            failTurn(id, "Cina could not format the next action. Completed actions are preserved; Retry can continue."); return
+        val raw = try { assistant.generate(AssistantPrompt.toolFollowUp(original, request.name, result)) { _live.value = it } }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { failAfterTools(chat.id, id, "The tool completed, but Cina could not finish the reply. Retry to continue.", outcomes, dispatcher); return }
+        val next = try { parseAction(raw, original, outcomes, assistant, dispatcher) } catch (e: CancellationException) { throw e }
+        catch (e: ToolDetailsRequiredException) {
+            finishAnswer(chat.id, outcomes.filter(dispatcher::succeeded).map(dispatcher::resultMessage).plus(e.message!!).joinToString("\n\n")); return
+        } catch (e: Exception) {
+            failAfterTools(chat.id, id, "Cina could not prepare the next action. Completed actions are preserved; Retry can continue.", outcomes, dispatcher); return
         }
         if (next == null) finishGeneratedAnswer(chat, assistant, raw, original, outcomes)
         else dispatchOrApprove(chat, next, assistant, dispatcher, original, calls, outcomes)
@@ -622,8 +637,15 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             _live.value = ""; _stage.value = "Recovering answer"
             assistant.recoverTextAnswer(original, results)
         }
-        if (answer == EMPTY_REPLY_FALLBACK) activeTurnId?.let { failTurn(it, "The model did not finish an answer. Retry or edit your request.") }
+        if (answer == EMPTY_REPLY_FALLBACK) activeTurnId?.let { id ->
+            tools?.let { failAfterTools(chat.id, id, "The model did not finish an answer. Retry or edit your request.", results, it) }
+        }
         else finishAnswer(chat.id, answer)
+    }
+    private fun failAfterTools(chatId: Long, turnId: Long, message: String, results: List<String>, dispatcher: AssistantTools) {
+        dispatcher.confirmedResults(results)?.let { store.addMessage(chatId, "assistant", it) }
+        _live.value = ""
+        failTurn(turnId, message)
     }
     private fun finishAnswer(chatId: Long, answer: String) {
         _live.value = ""

@@ -14,7 +14,8 @@ import java.net.URL
 import java.time.Instant
 
 class AssistantTools(private val context: Context, private val store: LocalStore, private val secrets: SecretStore? = null,
-                     private val mcp: McpConnections? = null, private val scheduledModelPath: String? = null) {
+                     private val mcp: McpConnections? = null, private val scheduledModelPath: String? = null,
+                     private val webSearch: (String) -> String = DuckDuckGoSearch::search) {
     fun specification(webEnabled: Boolean, request: String = "", recent: String = "", hasFiles: Boolean = false, all: Boolean = false): String =
         ToolCatalog.render(ToolCatalog.select(request, recent, hasFiles, webEnabled,
             context.getSharedPreferences("settings", 0).getBoolean("memory", true),
@@ -29,7 +30,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
             a.put("when_iso", ReminderTime.parse(phrase).toString())
             a.remove("when_text")
         }
-        return ToolRequest(request.name, a)
+        return ToolRequest(request.name, a, request.originalCallKey ?: callKey(request))
     }
     fun itemLabel(request: ToolRequest): String? = when (request.name) {
         "edit_note", "delete_note" -> store.notes().firstOrNull { it.id == request.arguments.optLong("id") }?.title
@@ -41,9 +42,11 @@ class AssistantTools(private val context: Context, private val store: LocalStore
     fun history(scope: String) = store.toolHistory(scope)
 
     fun parse(text: String): ToolRequest? {
-        val payload = ToolResponseProtocol.payload(text) ?: return null
-        val obj = JSONObject(payload)
-        return ToolRequest(obj.getString("name"), obj.getJSONObject("arguments"))
+        val call = ToolResponseProtocol.decode(text) ?: return null
+        val arguments = JSONObject(call.arguments)
+        try { ToolCatalog.get(call.name)!!.validate(arguments) }
+        catch (error: IllegalArgumentException) { throw ToolProtocolException(error.message ?: "Invalid tool arguments.") }
+        return ToolRequest(call.name, arguments)
     }
     fun callKey(request: ToolRequest): String {
         fun canonical(value: Any?): String = when (value) {
@@ -62,9 +65,12 @@ class AssistantTools(private val context: Context, private val store: LocalStore
     fun resultMessage(result: String): String = runCatching { JSONObject(result).getString("message") }.getOrDefault(result)
     fun succeeded(result: String): Boolean = runCatching { JSONObject(result).getString("status") == "success" }.getOrDefault(false)
     fun failure(error: Exception): String = JSONObject().put("status", "error").put("message", error.message ?: "Action failed.").toString()
+    fun confirmedResults(results: List<String>): String? = results.filter(::succeeded).map(::resultMessage)
+        .distinct().takeIf { it.isNotEmpty() }?.joinToString("\n\n", "These tool steps completed before the response stopped:\n\n")
 
     suspend fun execute(chat: Chat, request: ToolRequest, scope: String = "chat:${chat.id}"): String = withContext(Dispatchers.IO) {
-        if (ToolCatalog.kind(request.name) == ToolKind.WRITE) store.toolReceipt(scope, callKey(request))?.let { return@withContext it }
+        val originalKey = request.originalCallKey ?: callKey(request)
+        if (ToolCatalog.kind(request.name) == ToolKind.WRITE) store.toolReceipt(scope, originalKey)?.let { return@withContext it }
         val prepared = normalize(request)
         val definition = ToolCatalog.get(prepared.name) ?: error("Unknown tool.")
         if (scheduledModelPath != null) require(definition.scheduled) { "This tool is unavailable in scheduled tasks." }
@@ -80,7 +86,9 @@ class AssistantTools(private val context: Context, private val store: LocalStore
                 require(listOf("body", "append", "title").any { a.has(it) }) { "Specify what to change." }
             }
         }
-        if (definition.kind == ToolKind.WRITE) store.beginTool(scope, key)?.let { return@withContext it }
+        // Keep the original relative-time request and its resolved time under the same receipt.
+        // Retrying "in 10 minutes" must not resolve a new timestamp and create a duplicate reminder.
+        if (definition.kind == ToolKind.WRITE) store.beginTool(scope, key, listOf(originalKey))?.let { return@withContext it }
         fun required(key: String): String = a.getString(key).trim().also { require(it.isNotBlank()) { "$key is required." } }
         val result = when(prepared.name) {
             "local_find" -> {
@@ -204,7 +212,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
             "web_search" -> {
                 require((store.chat(chat.id) ?: chat).web) { "Web access is off for this chat." }
                 val query = required("query").take(400)
-                runCatching { "DuckDuckGo results:\n${DuckDuckGoSearch.search(query)}" }.getOrElse { failure ->
+                runCatching { "DuckDuckGo results:\n${webSearch(query)}" }.getOrElse { failure ->
                     val key = secrets?.get("brave") ?: throw failure
                     val connection = (URL("https://api.search.brave.com/res/v1/web/search?q=${android.net.Uri.encode(query)}&count=5").openConnection() as HttpURLConnection).apply {
                         connectTimeout = 15_000; readTimeout = 15_000; setRequestProperty("X-Subscription-Token", key)
@@ -235,7 +243,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
             else -> error("Unknown tool: ${request.name}")
         }
         val outcome = JSONObject().put("status", "success").put("message", result).toString()
-        if (definition.kind == ToolKind.WRITE) store.finishTool(scope, key, outcome)
+        if (definition.kind == ToolKind.WRITE) store.finishTool(scope, key, outcome, listOf(originalKey))
         if (chat.id != 0L) store.log(chat.id, "${definition.label} → ${result.take(200)}")
         outcome
     }

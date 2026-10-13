@@ -215,7 +215,8 @@ private fun ScheduledContent(vm: AssistantViewModel) {
         dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } })
     viewed?.let { task -> AlertDialog(onDismissRequest = { viewed = null }, containerColor = Paper, title = { Text(task.title) },
         text = { Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
-            if (task.lastError != null) Text(task.lastError, color = MaterialTheme.colorScheme.error) else AssistantResponse(task.lastResult.orEmpty())
+            if (task.lastError != null) Text(task.lastError, color = MaterialTheme.colorScheme.error)
+            if (task.lastResult != null) AssistantResponse(task.lastResult)
         } }, confirmButton = { TextButton(onClick = { viewed = null }) { Text("Done") } }) }
     deleting?.let { task -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("Delete ${task.title}?") },
         confirmButton = { TextButton(onClick = { vm.deleteScheduledTask(task.id); deleting = null }) { Text("Delete") } },

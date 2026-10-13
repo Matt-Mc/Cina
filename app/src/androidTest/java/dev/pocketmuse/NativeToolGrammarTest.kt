@@ -18,7 +18,7 @@ import java.io.File
 class NativeToolGrammarTest {
     @Test fun forcedRepairSamplerConstrainsActionJsonAndResetsForOrdinaryReplies() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val model = File(context.getExternalFilesDir(null), "audit-model.gguf")
+        val model = File(context.getExternalFilesDir(null), InstrumentationRegistry.getArguments().getString("nativeModel") ?: "audit-model.gguf")
         assumeTrue("Supply audit-model.gguf to run native generation", model.exists())
         ModelAccess.mutex.withLock {
             val engine = AiChat.getInferenceEngine(context)

@@ -331,33 +331,14 @@ constexpr const char *ROLE_USER         = "user";
 constexpr const char *ROLE_ASSISTANT    = "assistant";
 
 static std::vector<common_chat_msg> chat_msgs;
-static llama_pos system_prompt_position;
 static llama_pos current_position;
 
 static void reset_long_term_states(const bool clear_kv_cache = true) {
     chat_msgs.clear();
-    system_prompt_position = 0;
     current_position = 0;
 
     if (clear_kv_cache)
         llama_memory_clear(llama_get_memory(g_context), false);
-}
-
-/**
- * TODO-hyin: implement sliding-window version as a better alternative
- *
- * Context shifting by discarding the older half of the tokens appended after system prompt:
- * - take the [system_prompt_position] first tokens from the original prompt
- * - take half of the last (system_prompt_position - system_prompt_position) tokens
- * - recompute the logits in batches
- */
-static void shift_context() {
-    const int n_discard = (current_position - system_prompt_position) / 2;
-    LOGi("%s: Discarding %d tokens", __func__, n_discard);
-    llama_memory_seq_rm(llama_get_memory(g_context), 0, system_prompt_position, system_prompt_position + n_discard);
-    llama_memory_seq_add(llama_get_memory(g_context), 0, system_prompt_position + n_discard, current_position, -n_discard);
-    current_position -= n_discard;
-    LOGi("%s: Context shifting done! Current position: %d", __func__, current_position);
 }
 
 static std::string chat_add_and_format(const std::string &role, const std::string &content) {
@@ -369,13 +350,12 @@ static std::string chat_add_and_format(const std::string &role, const std::strin
         common_chat_templates_inputs inputs;
         inputs.enable_thinking = g_enable_thinking;
         inputs.messages = chat_msgs;
-        inputs.add_generation_prompt = false;
-        const auto past = chat_msgs.empty() ? std::string() : common_chat_templates_apply(g_chat_templates.get(), inputs).prompt;
         inputs.messages.push_back(new_msg);
         inputs.add_generation_prompt = role == ROLE_USER;
-        const auto next = common_chat_templates_apply(g_chat_templates.get(), inputs).prompt;
-        if (next.size() < past.size()) throw std::runtime_error("Chat template prefix changed");
-        formatted = (role == ROLE_USER && !past.empty() && past.back() == '\n' ? "\n" : "") + next.substr(past.size());
+        // Thinking templates may rewrite earlier assistant messages (Qwen drops old reasoning
+        // after a new user message). Their rendered history is not an append-only prefix.
+        // Return the complete transcript and rebuild its KV cache before the next generation.
+        formatted = common_chat_templates_apply(g_chat_templates.get(), inputs).prompt;
     } else {
         formatted = common_chat_format_single(
                 g_chat_templates.get(), chat_msgs, new_msg, role == ROLE_USER, /* use_jinja */ false);
@@ -394,11 +374,23 @@ static std::string chat_add_and_format(const std::string &role, const std::strin
 static llama_pos stop_generation_position;
 static std::string cached_token_chars;
 static std::ostringstream assistant_ss;
+static bool generation_pending = false;
+
+static void finish_assistant_message() {
+    if (!generation_pending) return;
+    common_chat_msg message;
+    message.role = ROLE_ASSISTANT;
+    message.content = assistant_ss.str();
+    chat_msgs.push_back(std::move(message));
+    generation_pending = false;
+}
 
 static void reset_short_term_states() {
     stop_generation_position = 0;
     cached_token_chars.clear();
     assistant_ss.str("");
+    generation_pending = false;
+    g_return_thinking_prefix = false;
 }
 
 static int decode_tokens_in_batches(
@@ -414,11 +406,8 @@ static int decode_tokens_in_batches(
         common_batch_clear(batch);
         LOGv("%s: Preparing a batch size of %d starting at: %d", __func__, cur_batch_size, i);
 
-        // Shift context if current batch cannot fit into the context
-        if (start_pos + i + cur_batch_size >= DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM) {
-            LOGw("%s: Current batch won't fit into context! Shifting...", __func__);
-            shift_context();
-        }
+        if (start_pos + i + cur_batch_size > static_cast<int>(llama_n_ctx(context)) - OVERFLOW_HEADROOM)
+            return 3;
 
         // Add tokens to the batch with proper positions
         for (int j = 0; j < cur_batch_size; j++) {
@@ -445,47 +434,53 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processSystemPrompt(
         jobject /*unused*/,
         jstring jsystem_prompt
 ) {
-    // Reset long-term & short-term states
-    g_action_grammar.clear();
-    reset_long_term_states();
-    reset_short_term_states();
+    try {
+        // Reset long-term & short-term states
+        g_action_grammar.clear();
+        reset_long_term_states();
+        reset_short_term_states();
 
-    // Obtain system prompt from JEnv
-    const auto *system_prompt = env->GetStringUTFChars(jsystem_prompt, nullptr);
-    LOGd("%s: System prompt received: \n%s", __func__, system_prompt);
-    std::string formatted_system_prompt(system_prompt);
+        // Obtain system prompt from JEnv
+        const auto *system_prompt = env->GetStringUTFChars(jsystem_prompt, nullptr);
+        if (!system_prompt) return 1;
+        LOGd("%s: System prompt received: \n%s", __func__, system_prompt);
+        std::string formatted_system_prompt(system_prompt);
+        env->ReleaseStringUTFChars(jsystem_prompt, system_prompt);
 
-    // Format system prompt if applicable
-    const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
-    if (has_chat_template) {
-        formatted_system_prompt = chat_add_and_format(ROLE_SYSTEM, system_prompt);
+        // Format system prompt if applicable
+        const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
+        if (has_chat_template) {
+            formatted_system_prompt = chat_add_and_format(ROLE_SYSTEM, formatted_system_prompt);
+        }
+
+        // Tokenize system prompt
+        const auto system_tokens = common_tokenize(g_context, formatted_system_prompt,
+                                                   has_chat_template, has_chat_template);
+        for (auto id: system_tokens) {
+            LOGv("token: `%s`\t -> `%d`", common_token_to_piece(g_context, id).c_str(), id);
+        }
+
+        // Handle context overflow
+        const int max_batch_size = static_cast<int>(llama_n_ctx(g_context)) - OVERFLOW_HEADROOM;
+        if ((int) system_tokens.size() > max_batch_size) {
+            LOGe("%s: System prompt too long for context! %d tokens, max: %d",
+                 __func__, (int) system_tokens.size(), max_batch_size);
+            return 1;
+        }
+
+        // Decode system tokens in batches
+        if (decode_tokens_in_batches(g_context, g_batch, system_tokens, current_position)) {
+            LOGe("%s: llama_decode() failed!", __func__);
+            return 2;
+        }
+
+        // Update position
+        current_position = (int) system_tokens.size();
+        return 0;
+    } catch (const std::exception &error) {
+        LOGe("System prompt processing failed: %s", error.what());
+        return 4;
     }
-    env->ReleaseStringUTFChars(jsystem_prompt, system_prompt);
-
-    // Tokenize system prompt
-    const auto system_tokens = common_tokenize(g_context, formatted_system_prompt,
-                                               has_chat_template, has_chat_template);
-    for (auto id: system_tokens) {
-        LOGv("token: `%s`\t -> `%d`", common_token_to_piece(g_context, id).c_str(), id);
-    }
-
-    // Handle context overflow
-    const int max_batch_size = DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM;
-    if ((int) system_tokens.size() > max_batch_size) {
-        LOGe("%s: System prompt too long for context! %d tokens, max: %d",
-             __func__, (int) system_tokens.size(), max_batch_size);
-        return 1;
-    }
-
-    // Decode system tokens in batches
-    if (decode_tokens_in_batches(g_context, g_batch, system_tokens, current_position)) {
-        LOGe("%s: llama_decode() failed!", __func__);
-        return 2;
-    }
-
-    // Update position
-    system_prompt_position = current_position = (int) system_tokens.size();
-    return 0;
 }
 
 extern "C"
@@ -496,55 +491,64 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
         jstring juser_prompt,
         jint n_predict
 ) {
-    // Reset short-term states
-    reset_short_term_states();
     try {
+        // Reset short-term states
+        finish_assistant_message();
+        reset_short_term_states();
         auto *next_sampler = new_sampler(DEFAULT_SAMPLER_TEMP);
+        if (!next_sampler) throw std::runtime_error("Could not create the model sampler");
         common_sampler_free(g_sampler);
         g_sampler = next_sampler;
+
+        // Obtain and tokenize user prompt
+        const auto *const user_prompt = env->GetStringUTFChars(juser_prompt, nullptr);
+        if (!user_prompt) return 1;
+        LOGd("%s: User prompt received: \n%s", __func__, user_prompt);
+        std::string formatted_user_prompt(user_prompt);
+        env->ReleaseStringUTFChars(juser_prompt, user_prompt);
+
+        // Format user prompt if applicable
+        const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
+        if (has_chat_template) {
+            formatted_user_prompt = chat_add_and_format(ROLE_USER, formatted_user_prompt);
+        }
+        const auto opening_think = formatted_user_prompt.rfind("<think>");
+        const auto closing_think = formatted_user_prompt.rfind("</think>");
+        g_return_thinking_prefix = has_chat_template && opening_think != std::string::npos &&
+            formatted_user_prompt.find_first_not_of(" \t\r\n", opening_think + 7) == std::string::npos &&
+            (closing_think == std::string::npos || closing_think < opening_think);
+
+        // Decode formatted user prompts
+        auto user_tokens = common_tokenize(g_context, formatted_user_prompt, has_chat_template, has_chat_template);
+        for (auto id: user_tokens) {
+            LOGv("token: `%s`\t -> `%d`", common_token_to_piece(g_context, id).c_str(), id);
+        }
+
+        // Reject overflow rather than dropping conversation or tool-result tokens.
+        const int user_prompt_size = (int) user_tokens.size();
+        const int max_batch_size = static_cast<int>(llama_n_ctx(g_context)) - OVERFLOW_HEADROOM;
+        const bool rebuild_history = has_chat_template && g_thinking_supported;
+        if (user_prompt_size + (rebuild_history ? 0 : current_position) >= max_batch_size) return 3;
+        if (rebuild_history) {
+            llama_memory_clear(llama_get_memory(g_context), false);
+            current_position = 0;
+        }
+
+        // Decode user tokens in batches
+        if (decode_tokens_in_batches(g_context, g_batch, user_tokens, current_position, true)) {
+            LOGe("%s: llama_decode() failed!", __func__);
+            return 2;
+        }
+
+        // Update position
+        current_position += user_prompt_size;
+        stop_generation_position = std::min(current_position + n_predict, max_batch_size);
+        generation_pending = true;
+        return 0;
     } catch (const std::exception &error) {
-        LOGe("Action sampler failed: %s", error.what());
+        LOGe("User prompt processing failed: %s", error.what());
         return 4;
     }
-
-    // Obtain and tokenize user prompt
-    const auto *const user_prompt = env->GetStringUTFChars(juser_prompt, nullptr);
-    LOGd("%s: User prompt received: \n%s", __func__, user_prompt);
-    std::string formatted_user_prompt(user_prompt);
-
-    // Format user prompt if applicable
-    const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
-    if (has_chat_template) {
-        formatted_user_prompt = chat_add_and_format(ROLE_USER, user_prompt);
-    }
-    env->ReleaseStringUTFChars(juser_prompt, user_prompt);
-    const auto opening_think = formatted_user_prompt.rfind("<think>");
-    const auto closing_think = formatted_user_prompt.rfind("</think>");
-    g_return_thinking_prefix = has_chat_template && opening_think != std::string::npos &&
-        formatted_user_prompt.find_first_not_of(" \t\r\n", opening_think + 7) == std::string::npos &&
-        (closing_think == std::string::npos || closing_think < opening_think);
-
-    // Decode formatted user prompts
-    auto user_tokens = common_tokenize(g_context, formatted_user_prompt, has_chat_template, has_chat_template);
-    for (auto id: user_tokens) {
-        LOGv("token: `%s`\t -> `%d`", common_token_to_piece(g_context, id).c_str(), id);
-    }
-
-    // Ensure user prompt doesn't exceed the context size by truncating if necessary.
-    const int user_prompt_size = (int) user_tokens.size();
-    const int max_batch_size = static_cast<int>(llama_n_ctx(g_context)) - OVERFLOW_HEADROOM;
-    if (user_prompt_size + current_position >= max_batch_size) return 3;
-
-    // Decode user tokens in batches
-    if (decode_tokens_in_batches(g_context, g_batch, user_tokens, current_position, true)) {
-        LOGe("%s: llama_decode() failed!", __func__);
-        return 2;
-    }
-
-    // Update position
-    current_position += user_prompt_size;
-    stop_generation_position = current_position + n_predict;
-    return 0;
 }
 
 static bool is_valid_utf8(const char *string) {
@@ -587,67 +591,60 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
         JNIEnv *env,
         jobject /*unused*/
 ) {
-    // Infinite text generation via context shifting
-    if (current_position >= static_cast<int>(llama_n_ctx(g_context)) - OVERFLOW_HEADROOM) {
-        LOGw("%s: Context full! Shifting...", __func__);
-        shift_context();
-    }
-
-    // Stop if reaching the marked position
-    if (current_position >= stop_generation_position) {
-        LOGw("%s: STOP: hitting stop position: %d", __func__, stop_generation_position);
-        return nullptr;
-    }
-
-    // Sample next token
-    llama_token new_token_id;
     try {
-        new_token_id = common_sampler_sample(g_sampler, g_context, -1);
+        // Stop if reaching the marked position
+        if (current_position >= stop_generation_position) {
+            LOGw("%s: STOP: hitting stop position: %d", __func__, stop_generation_position);
+            finish_assistant_message();
+            return nullptr;
+        }
+
+        // Sample next token
+        const auto new_token_id = common_sampler_sample(g_sampler, g_context, -1);
         common_sampler_accept(g_sampler, new_token_id, true);
+
+        // Populate the batch with new token, then decode
+        common_batch_clear(g_batch);
+        common_batch_add(g_batch, new_token_id, current_position, {0}, true);
+        if (llama_decode(g_context, g_batch) != 0) {
+            throw std::runtime_error("Model decoding failed while generating a response");
+        }
+
+        // Update position
+        current_position++;
+
+        // Stop if next token is EOG
+        if (llama_vocab_is_eog(llama_model_get_vocab(g_model), new_token_id)) {
+            LOGd("id: %d,\tIS EOG!\nSTOP.", new_token_id);
+            finish_assistant_message();
+            return nullptr;
+        }
+
+        // If not EOG, convert to text
+        auto new_token_chars = common_token_to_piece(g_context, new_token_id);
+        cached_token_chars += new_token_chars;
+
+        // Create and return a valid UTF-8 Java string
+        jstring result = nullptr;
+        if (is_valid_utf8(cached_token_chars.c_str())) {
+            if (g_return_thinking_prefix) {
+                cached_token_chars.insert(0, "<think>");
+                g_return_thinking_prefix = false;
+            }
+            result = env->NewStringUTF(cached_token_chars.c_str());
+            LOGv("id: %d,\tcached: `%s`,\tnew: `%s`", new_token_id, cached_token_chars.c_str(), new_token_chars.c_str());
+
+            assistant_ss << cached_token_chars;
+            cached_token_chars.clear();
+        } else {
+            LOGv("id: %d,\tappend to cache", new_token_id);
+            result = env->NewStringUTF("");
+        }
+        return result;
     } catch (const std::exception &error) {
         env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), error.what());
         return nullptr;
     }
-
-    // Populate the batch with new token, then decode
-    common_batch_clear(g_batch);
-    common_batch_add(g_batch, new_token_id, current_position, {0}, true);
-    if (llama_decode(g_context, g_batch) != 0) {
-        LOGe("%s: llama_decode() failed for generated token", __func__);
-        return nullptr;
-    }
-
-    // Update position
-    current_position++;
-
-    // Stop if next token is EOG
-    if (llama_vocab_is_eog(llama_model_get_vocab(g_model), new_token_id)) {
-        LOGd("id: %d,\tIS EOG!\nSTOP.", new_token_id);
-        chat_add_and_format(ROLE_ASSISTANT, assistant_ss.str());
-        return nullptr;
-    }
-
-    // If not EOG, convert to text
-    auto new_token_chars = common_token_to_piece(g_context, new_token_id);
-    cached_token_chars += new_token_chars;
-
-    // Create and return a valid UTF-8 Java string
-    jstring result = nullptr;
-    if (is_valid_utf8(cached_token_chars.c_str())) {
-        if (g_return_thinking_prefix) {
-            cached_token_chars.insert(0, "<think>");
-            g_return_thinking_prefix = false;
-        }
-        result = env->NewStringUTF(cached_token_chars.c_str());
-        LOGv("id: %d,\tcached: `%s`,\tnew: `%s`", new_token_id, cached_token_chars.c_str(), new_token_chars.c_str());
-
-        assistant_ss << cached_token_chars;
-        cached_token_chars.clear();
-    } else {
-        LOGv("id: %d,\tappend to cache", new_token_id);
-        result = env->NewStringUTF("");
-    }
-    return result;
 }
 
 
