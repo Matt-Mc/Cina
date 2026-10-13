@@ -41,11 +41,8 @@ class AssistantTools(private val context: Context, private val store: LocalStore
     fun history(scope: String) = store.toolHistory(scope)
 
     fun parse(text: String): ToolRequest? {
-        if(!text.trimStart().startsWith("[tool]")) return null
-        require(text.length <= 32_000) { "Tool request is too long." }
-        val match = Regex("^\\s*\\[tool]([\\s\\S]*?)\\[/tool]\\s*$").matchEntire(text)
-            ?: throw IllegalArgumentException("Malformed tool request.")
-        val obj = JSONObject(match.groupValues[1])
+        val payload = ToolResponseProtocol.payload(text) ?: return null
+        val obj = JSONObject(payload)
         return ToolRequest(obj.getString("name"), obj.getJSONObject("arguments"))
     }
     fun callKey(request: ToolRequest): String {

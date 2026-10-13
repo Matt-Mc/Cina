@@ -615,14 +615,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         else dispatchOrApprove(chat, next, assistant, dispatcher, original, calls, outcomes)
     }
     private suspend fun parseAction(raw: String, original: String, results: List<String>, assistant: AssistantRuntime, dispatcher: AssistantTools): ToolRequest? {
-        val answer = splitModelResponse(raw).answer
-        return try { dispatcher.parse(answer) } catch (e: IllegalArgumentException) {
-            _stage.value = "Repairing action format"
-            dispatcher.parse(splitModelResponse(assistant.repairAction(original, answer, results)).answer) ?: error("Action repair did not produce an action.")
-        } catch (e: org.json.JSONException) {
-            _stage.value = "Repairing action format"
-            dispatcher.parse(splitModelResponse(assistant.repairAction(original, answer, results)).answer) ?: error("Action repair did not produce an action.")
-        }
+        return assistant.parseAction(raw, original, results, dispatcher) { _stage.value = "Repairing action format" }
     }
     private suspend fun finishGeneratedAnswer(chat: Chat, assistant: AssistantRuntime, raw: String, original: String, results: List<String>) {
         val answer = if (hasFinalAnswer(raw)) raw else {
@@ -646,7 +639,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         val firstAnswer = messages.firstOrNull { it.role == "assistant" }?.body ?: return
         try {
             val title = assistant.generateTitle(firstUser, splitModelResponse(firstAnswer).answer)
-            if (title.isNotBlank() && !title.contains("[tool]")) { store.setChatTitle(chatId, title); refresh() }
+            if (hasFinalAnswer(title)) { store.setChatTitle(chatId, title); refresh() }
         } catch (_: Exception) { assistant.invalidate() }
     }
     fun stop() {

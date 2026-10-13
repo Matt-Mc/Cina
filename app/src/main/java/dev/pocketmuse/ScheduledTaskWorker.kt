@@ -76,7 +76,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                             suspend fun finish(raw: String): String = if (hasFinalAnswer(raw)) raw
                                 else runtime.recoverTextAnswer(task.prompt, results)
                             repeat(20) {
-                                val request = tools.parse(answer) ?: return@withTimeout finish(answer)
+                                val request = runtime.parseAction(answer, task.prompt, results, tools) ?: return@withTimeout finish(answer)
                                 val key = tools.callKey(request)
                                 val blocked = ToolTurnPolicy.blockReason(key, tools.needsConfirmation(request), executedCalls, 3)
                                 require(blocked == null) { blocked.orEmpty() }
