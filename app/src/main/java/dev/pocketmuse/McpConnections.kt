@@ -9,10 +9,11 @@ import java.util.UUID
 
 data class McpPreset(val id: String, val title: String, val url: String, val hint: String)
 data class McpTool(val serverId: String, val name: String, val description: String, val schema: JSONObject)
-data class McpConnection(val preset: McpPreset, val connected: Boolean, val toolCount: Int)
+data class McpConnection(val preset: McpPreset, val connected: Boolean, val toolCount: Int, val account: String? = null)
 
 /** Remote HTTPS MCP connections. Tokens never enter prompts, messages, or action logs. */
 class McpConnections(context: Context, private val secrets: SecretStore) {
+    internal val google = GoogleConnections(context, secrets)
     private val linearOAuth = LinearOAuth(secrets)
     companion object {
         val presets = listOf(
@@ -47,7 +48,17 @@ class McpConnections(context: Context, private val secrets: SecretStore) {
         return presets + custom
     }
 
-    fun snapshot(): List<McpConnection> = allPresets().map { McpConnection(it, prefs.getBoolean(it.id, false), tools[it.id]?.size ?: 0) }
+    fun snapshot(): List<McpConnection> = allPresets().map { McpConnection(it, prefs.getBoolean(it.id, false), tools[it.id]?.size ?: 0, google.account(it.id)) }
+    internal fun completeGoogle(id: String, result: com.google.android.gms.auth.api.identity.AuthorizationResult): Int {
+        require(GoogleService.supports(id))
+        google.complete(id, result)
+        secrets.put("mcp_$id", "")
+        sessions.remove(id); versions.remove(id)
+        val available = GoogleService.tools(id)
+        tools[id] = available
+        prefs.edit().putBoolean(id, true).apply()
+        return available.size
+    }
     fun availableTools(): List<McpTool> = allPresets().filter { prefs.getBoolean(it.id, false) }.flatMap { tools[it.id].orEmpty() }
     fun beginLinearOAuth() = linearOAuth.begin()
     fun completeLinearOAuth(uri: android.net.Uri): Int = connect("linear", linearOAuth.complete(uri))
@@ -83,6 +94,14 @@ class McpConnections(context: Context, private val secrets: SecretStore) {
 
     fun connect(id: String, newToken: String? = null): Int {
         val preset = allPresets().firstOrNull { it.id == id } ?: error("Unknown connection.")
+        if (GoogleService.supports(id) && newToken == null && google.account(id) != null) {
+            val account = google.account(id)
+            google.token(id)
+            check(google.account(id) == account && prefs.getBoolean(id, false)) { "Connection changed. Reconnect this service." }
+            val available = GoogleService.tools(id)
+            tools[id] = available
+            return available.size
+        }
         val token = newToken?.trim()?.takeIf { it.isNotEmpty() }
             ?: if (id == "linear") linearOAuth.accessToken() ?: secrets.get("mcp_$id") else secrets.get("mcp_$id")
         require(id.startsWith("custom_") || !token.isNullOrBlank()) { "Enter an access token for ${preset.title}." }
@@ -91,6 +110,7 @@ class McpConnections(context: Context, private val secrets: SecretStore) {
         val discovered = discover(preset, token.orEmpty())
         require(discovered.isNotEmpty()) { "${preset.title} returned no tools." }
         if (newToken != null) secrets.put("mcp_$id", token.orEmpty())
+        if (newToken != null && GoogleService.supports(id)) google.disconnect(id)
         tools[id] = discovered
         prefs.edit().putBoolean(id, true).apply()
         return discovered.size
@@ -100,6 +120,7 @@ class McpConnections(context: Context, private val secrets: SecretStore) {
         require(allPresets().any { it.id == id })
         tools.remove(id); sessions.remove(id); versions.remove(id)
         secrets.put("mcp_$id", "")
+        google.disconnect(id)
         if (id == "linear") linearOAuth.clear()
         prefs.edit().putBoolean(id, false).apply()
     }
@@ -115,6 +136,7 @@ class McpConnections(context: Context, private val secrets: SecretStore) {
         val preset = allPresets().firstOrNull { it.id == id } ?: error("Unknown connection.")
         require(prefs.getBoolean(id, false)) { "${preset.title} is disconnected." }
         require(tools[id]?.any { it.name == name } == true) { "Tool is unavailable. Reconnect ${preset.title}." }
+        if (GoogleService.supports(id) && google.account(id) != null) return google.call(id, name, arguments)
         val token = if (id == "linear") linearOAuth.accessToken() ?: secrets.get("mcp_$id")
             else secrets.get("mcp_$id")
         require(id.startsWith("custom_") || !token.isNullOrBlank()) { "Reconnect ${preset.title}." }

@@ -3,6 +3,15 @@ package dev.pocketmuse
 internal enum class ResponseMode { AUTO, QUICK, DEEP }
 
 internal object ResponsePolicy {
+    fun workFocused(request: String): Boolean = Regex("\\b(local (action )?plan|action plan|plan for (my )?approval|read_work|work_id)\\b",RegexOption.IGNORE_CASE).containsMatchIn(request)
+    fun workTools(request: String): Set<String> = buildSet {
+        addAll(listOf("list_work","read_work","local_find","find_skill"))
+        fun mentions(pattern: String)=Regex(pattern,RegexOption.IGNORE_CASE).containsMatchIn(request.substringBefore("Current read_work result:"))
+        if(mentions("\\b(draft|create|new|build)\\b")) addAll(listOf("draft_work_step","append_work_step"))
+        if(mentions("\\b(append|add)\\b")) add("append_work_step")
+        if(mentions("\\b(schedule|start|later)\\b")) add("schedule_work")
+        if(mentions("\\b(pause|cancel|resume|stop)\\b")) add("manage_work")
+    }
     fun resolve(mode: ResponseMode, request: String, goal: Boolean = false): ResponseMode {
         if (mode != ResponseMode.AUTO) return mode
         val complex = Regex("\\b(compare|analy[sz]e|tradeoffs?|research|strategy|debug|step.by.step|detailed)\\b", RegexOption.IGNORE_CASE)
@@ -22,6 +31,7 @@ internal object ResponsePolicy {
     fun toolGroups(request: String): Set<String> {
         val terms = request.lowercase()
         return mapOf(
+            "work" to listOf("work", "task", "plan", "step", "approval", "pause", "cancel", "schedule"),
             "notes" to listOf("note", "grocer", "packing list"), "reminders" to listOf("remind", "nudge"),
             "schedules" to listOf("schedule", "automatic", "every day", "weekly prompt"), "calendar" to listOf("calendar", "event"),
             "alarm" to listOf("alarm", "wake"), "share" to listOf("share"),

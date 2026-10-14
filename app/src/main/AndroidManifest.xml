@@ -15,6 +15,16 @@
                 <data android:scheme="dev.pocketmuse.cina" android:host="oauth" />
             </intent-filter>
         </activity>
+        <activity android:name=".ShareCaptureActivity" android:exported="true" android:enabled="${inboxEnabled}" android:label="Cina Inbox" android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+            </intent-filter>
+        </activity>
         <activity android:name=".WidgetInputActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <receiver android:name=".QuickNoteWidget" android:exported="true" android:label="Cina · Quick Note">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>

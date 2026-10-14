@@ -13,6 +13,21 @@ import java.io.File
 
 /** Deterministic runtime tests: model responses are scripted; parsing, storage and tools are real. */
 class ToolResponseRecoveryTest {
+    @Test fun planCallsCannotInventTimesOrSubstituteImmediateWrites()=fixture { context,store ->
+        val tools=AssistantTools(context,store)
+        val runtime=AssistantRuntime(context,store,ScriptedEngine()) { web,request,recent,files -> tools.specification(web,request,recent,files) }
+        try {
+            val original="Draft a local action plan with a reminder to call Sam."
+            runtime.use(LocalModel(0,"Scripted","scripted.gguf","test",0),store.chat(store.newChat())!!,false,YouProfile(),original)
+            val invented="""[tool]{"name":"draft_work_step","arguments":{"kind":"reminder","title":"Call Sam","when_text":"in 2 hours"}}[/tool]"""
+            assertTrue(runCatching { runtime.parseAction(invented,original,emptyList(),tools) }.exceptionOrNull() is ToolDetailsRequiredException)
+            val schedule="""[tool]{"name":"schedule_work","arguments":{"work_id":"example","revision":1,"when_text":"in 2 hours"}}[/tool]"""
+            assertTrue(runCatching { runtime.parseAction(schedule,original,emptyList(),tools) }.exceptionOrNull() is ToolDetailsRequiredException)
+            val direct="""[tool]{"name":"create_note","arguments":{"title":"Call","body":"Sam"}}[/tool]"""
+            assertTrue(runCatching { runtime.parseAction(direct,original,emptyList(),tools) }.isFailure)
+            assertTrue(store.notes().isEmpty());assertTrue(WorkCoordinator(store).tasks().isEmpty())
+        } finally { runtime.release() }
+    }
     private class ScriptedEngine(vararg replies: String) : InferenceEngine {
         override val state = MutableStateFlow<InferenceEngine.State>(InferenceEngine.State.Initialized)
         override val lastPromptProcessingMillis = 0L
@@ -222,11 +237,13 @@ class ToolResponseRecoveryTest {
         val tools = AssistantTools(context, store, scheduledModelPath = "test-model")
         val chat = Chat(0, "Scheduled", false, false)
         val note = tools.parse("create_note(title='Scheduled',body='Saved locally')")!!
-        assertTrue(tools.succeeded(tools.execute(chat, note, "schedule:test")))
+        val result=org.json.JSONObject(tools.execute(chat, note, "scheduled:test"))
+        assertEquals("pending_approval",result.getString("status"))
         listOf("web_search('Ottawa')", "delete_note(id=1,version=1)", "mcp_call(server='x',tool='y',arguments={})").forEach {
-            assertTrue(it, runCatching { tools.execute(chat, tools.parse(it)!!, "schedule:test") }.isFailure)
+            assertTrue(it, runCatching { tools.execute(chat, tools.parse(it)!!, "scheduled:test") }.isFailure)
         }
-        assertEquals(1, store.notes().size)
+        assertTrue(store.notes().isEmpty())
+        assertEquals("waiting_for_approval",WorkCoordinator(store).tasks().single().state)
     }
 
     @Test fun replyRecoveryCannotDispatchAnotherActionOrInventAReceipt() = fixture { context, store ->

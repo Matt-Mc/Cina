@@ -7,7 +7,7 @@ import android.content.ContentValues
 import org.json.JSONArray
 import org.json.JSONObject
 
-class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 7) {
+class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 11) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE chats(id INTEGER PRIMARY KEY, title TEXT NOT NULL, web INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL, time INTEGER NOT NULL)")
@@ -21,6 +21,10 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         createChatSummaries(db)
         createMemoryProcessing(db)
         createUsabilityTables(db)
+        InboxRepository.createTables(db)
+        ContextRepository.createTables(db)
+        WorkCoordinator.createTables(db)
+        WorkCoordinator.createPlanTables(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createScheduledTasks(db)
@@ -29,6 +33,10 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         if (oldVersion < 5) db.execSQL("ALTER TABLE reminders ADD COLUMN notified_ms INTEGER")
         if (oldVersion < 6) createMemoryProcessing(db)
         if (oldVersion < 7) createUsabilityTables(db)
+        if (oldVersion < 8) InboxRepository.createTables(db)
+        if (oldVersion < 9) ContextRepository.createTables(db)
+        if (oldVersion < 10) WorkCoordinator.createTables(db)
+        if (oldVersion < 11) WorkCoordinator.createPlanTables(db)
     }
     private fun createUsabilityTables(db: SQLiteDatabase) {
         db.execSQL("ALTER TABLE notes ADD COLUMN version INTEGER NOT NULL DEFAULT 1")

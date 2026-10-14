@@ -26,17 +26,29 @@ data class RemoteModel(val repo: String, val file: String, val revision: String 
     val url get() = "https://huggingface.co/$repo/resolve/$revision/${file.split('/').joinToString("/") { Uri.encode(it) }}"
 }
 
-data class PopularGgufModel(val repo: String, val downloads: Long, val likes: Long, val files: List<RemoteModel>)
+data class PopularGgufModel(val repo: String, val downloads: Long, val likes: Long, val files: List<RemoteModel>, val recentlyUpdated: Boolean = false)
 
 class ModelLibrary(private val context: Context, private val store: LocalStore, private val secrets: SecretStore) {
     private val directory = File(context.filesDir, "models").apply { mkdirs() }
     private val reader = GgufMetadataReader.create()
+    private companion object {
+        const val MIN_PHONE_AGENT_MODEL_BYTES = 850_000_000L
+        const val MAX_PHONE_AGENT_MODEL_BYTES = 4_000_000_000L
+    }
 
     fun freeBytes(): Long = StatFs(directory.path).availableBytes
     fun totalRam(): Long = (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).let { manager -> android.app.ActivityManager.MemoryInfo().also(manager::getMemoryInfo).totalMem }
+    /** Conservative weight-file ceiling for interactive agent use on a phone. */
+    fun phoneAgentModelLimitBytes(): Long = minOf(MAX_PHONE_AGENT_MODEL_BYTES, totalRam() * 30 / 100)
+    fun phoneAgentDownloadLimitBytes(): Long = minOf(phoneAgentModelLimitBytes(), freeBytes() * 4 / 5)
+    fun isPhoneAgentSize(bytes: Long): Boolean = bytes in MIN_PHONE_AGENT_MODEL_BYTES..phoneAgentModelLimitBytes() && memorySuitability(bytes).startsWith("Likely suitable")
+    fun isPhoneAgentDownloadSize(bytes: Long): Boolean = isPhoneAgentSize(bytes) && bytes <= phoneAgentDownloadLimitBytes() && suitability(bytes).startsWith("Likely suitable")
     fun suitability(bytes: Long): String = when {
         bytes <= 0 -> "Size unknown; check storage and RAM before loading."
         freeBytes() < bytes * 12 / 10 -> "Not enough free storage."
+        else -> memorySuitability(bytes)
+    }
+    private fun memorySuitability(bytes: Long): String = when {
         bytes > 2_000_000_000L && totalRam() < 8_000_000_000L -> "An 8 GB or higher-memory phone is recommended."
         totalRam() < bytes * 2 + 1_000_000_000L -> "May not fit in this phone's memory."
         else -> "Likely suitable; performance depends on the phone."
@@ -49,35 +61,47 @@ class ModelLibrary(private val context: Context, private val store: LocalStore, 
         (0 until array.length()).mapNotNull { array.optJSONObject(it)?.optString("id")?.takeIf(String::isNotBlank) }
     }
 
-    /** Current popular text GGUFs from the Hub, with their single-file quantizations. */
+    /** Popular and recently updated text GGUFs, with single-file variants. */
     suspend fun popularGgufModels(): List<PopularGgufModel> = withContext(Dispatchers.IO) {
-        val endpoint = "https://huggingface.co/api/models?filter=gguf&sort=downloads&direction=-1&limit=80&expand%5B%5D=downloads&expand%5B%5D=likes&expand%5B%5D=tags"
-        val items = JSONArray(request(endpoint))
-        val repos = (0 until items.length()).mapNotNull { index ->
-            val item = items.optJSONObject(index) ?: return@mapNotNull null
-            val repo = item.optString("id").takeIf { it.matches(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) } ?: return@mapNotNull null
-            val tags = item.optJSONArray("tags") ?: JSONArray()
-            val tagSet = (0 until tags.length()).mapNotNull { tags.optString(it).takeIf(String::isNotBlank) }.toSet()
+        data class RepoInfo(val id: String, val downloads: Long, val likes: Long, val recentlyUpdated: Boolean)
+        val base = "https://huggingface.co/api/models?filter=gguf&direction=-1&limit=80&expand%5B%5D=downloads&expand%5B%5D=likes&expand%5B%5D=tags"
+        fun readRepos(sort: String, recentlyUpdated: Boolean): List<RepoInfo> {
+            val items = JSONArray(request("$base&sort=$sort"))
             val nonTextTask = setOf("feature-extraction", "sentence-similarity", "text-to-image", "image-to-text", "automatic-speech-recognition", "audio-classification", "text-to-speech")
-            if (tagSet.any { it in nonTextTask }) return@mapNotNull null
-            Triple(repo, item.optLong("downloads"), item.optLong("likes"))
+            return (0 until items.length()).mapNotNull { index ->
+                val item = items.optJSONObject(index) ?: return@mapNotNull null
+                val repo = item.optString("id").takeIf { it.matches(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) } ?: return@mapNotNull null
+                val tags = item.optJSONArray("tags") ?: JSONArray()
+                if ((0 until tags.length()).any { tags.optString(it) in nonTextTask }) return@mapNotNull null
+                RepoInfo(repo, item.optLong("downloads"), item.optLong("likes"), recentlyUpdated)
+            }
         }
+        val popular = readRepos("downloads", recentlyUpdated = false)
+        val recentlyUsed = try {
+            readRepos("lastModified", recentlyUpdated = true).filter { it.downloads >= 1_000 }
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { emptyList() }
+        val popularSelection = popular.take(24)
+        val popularIds = popularSelection.mapTo(mutableSetOf()) { it.id }
+        val recentIds = recentlyUsed.mapTo(mutableSetOf()) { it.id }
+        val repos = (popularSelection + recentlyUsed.filterNot { it.id in popularIds }.take(12))
+            .map { it.copy(recentlyUpdated = it.id in recentIds) }
         val gate = Semaphore(6)
         coroutineScope {
-            repos.take(32).map { (repo, downloads, likes) ->
+            repos.map { info ->
                 async(Dispatchers.IO) {
                     gate.withPermit {
                         try {
-                            val variants = files(repo).filter { file ->
+                            val variants = files(info.id).filter { file ->
                                 file.size > 0 && file.file.endsWith(".gguf", true) &&
                                     !Regex("(?i).*-\\d{5}-of-\\d{5}\\.gguf$").containsMatchIn(file.file)
                             }
-                            if (variants.isEmpty()) null else PopularGgufModel(repo, downloads, likes, variants)
+                            if (variants.isEmpty()) null else PopularGgufModel(info.id, info.downloads, info.likes, variants, info.recentlyUpdated)
                         } catch (e: CancellationException) { throw e }
                         catch (_: Exception) { null }
                     }
                 }
-            }.awaitAll().filterNotNull().sortedByDescending { it.downloads }.take(24)
+            }.awaitAll().filterNotNull().sortedByDescending { it.downloads }
         }
     }
 

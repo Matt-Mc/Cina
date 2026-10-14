@@ -4,6 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 val ciBuildNumber = providers.environmentVariable("CINA_BUILD_NUMBER").orNull?.toIntOrNull()
+val inboxEnabled = providers.gradleProperty("inboxEnabled").orNull?.toBooleanStrict() ?: true
 val releaseKeystore = providers.environmentVariable("CINA_KEYSTORE_FILE").orNull
 val releaseKeyAlias = providers.environmentVariable("CINA_KEY_ALIAS").orNull
 val releaseKeystorePassword = providers.environmentVariable("CINA_KEYSTORE_PASSWORD").orNull
@@ -18,6 +19,8 @@ android {
         targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = ciBuildNumber ?: 1
+        buildConfigField("boolean", "INBOX_ENABLED", inboxEnabled.toString())
+        manifestPlaceholders["inboxEnabled"] = inboxEnabled.toString()
         versionName = ciBuildNumber?.let { "0.1.$it" } ?: "0.1.0"
         ndk { abiFilters += if (providers.gradleProperty("emulator").isPresent) listOf("arm64-v8a", "x86_64") else listOf("arm64-v8a") }
     }
@@ -43,6 +46,7 @@ android {
     packaging { jniLibs { useLegacyPackaging = true } }
 }
 dependencies {
+    implementation("com.google.android.gms:play-services-auth:22.0.0")
     implementation(project(":lib"))
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.compose.ui:ui")
@@ -57,6 +61,7 @@ dependencies {
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.24.0")
     implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.24.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     debugImplementation("androidx.compose.ui:ui-tooling")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.04.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

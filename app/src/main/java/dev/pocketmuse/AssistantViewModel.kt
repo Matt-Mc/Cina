@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-class AssistantViewModel(application: Application) : AndroidViewModel(application) {
+class AssistantViewModel(application: Application, private val savedState: androidx.lifecycle.SavedStateHandle) : AndroidViewModel(application) {
     private val store = LocalStore(application)
     private val attachmentImporter = AttachmentImporter(application, store)
     private val profileStore = YouProfileStore(application)
@@ -195,6 +195,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) { mcp.refreshEnabled(::connectionState); _connections.value = mcp.snapshot(); runtime?.invalidate() }
     }
     fun connectMcp(id: String, token: String) {
+        if (pendingGoogleService != null || googleSignInBusy) return
         if (_connectionStates.value[id] == "Connecting…") return
         connectionState(id, "Connecting…")
         viewModelScope.launch(Dispatchers.IO) {
@@ -233,6 +234,52 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) { _status.value = e.message ?: "Could not start Linear sign-in."; connectionState("linear", _status.value) }
         }
     }
+    private var pendingGoogleService: String?
+        get() = savedState["pendingGoogleService"]
+        set(value) { savedState["pendingGoogleService"] = value }
+    private var googleSignInBusy = false
+    internal fun startGoogleSignIn(id: String, launch: (android.app.PendingIntent) -> Unit) {
+        if (pendingGoogleService != null || googleSignInBusy) return
+        googleSignInBusy = true
+        connectionState(id, "Waiting for Google…")
+        mcp.google.client.authorize(mcp.google.request(id))
+            .addOnSuccessListener { result ->
+                pendingGoogleService = id
+                if (result.hasResolution()) {
+                    googleSignInBusy = false
+                    try { launch(checkNotNull(result.pendingIntent)) }
+                    catch (_: Exception) { failGoogleSignIn("Could not open Google sign-in. Try again.") }
+                } else completeGoogleSignIn(id, result)
+            }
+            .addOnFailureListener {
+                pendingGoogleService = id
+                failGoogleSignIn("Google sign-in is unavailable. Check Google Play services and Cina's Google configuration, then try again.")
+            }
+    }
+    internal fun finishGoogleSignIn(data: Intent?, cancelled: Boolean) {
+        val id = pendingGoogleService ?: return
+        if (cancelled) { failGoogleSignIn("Sign-in cancelled. You can try again."); return }
+        try { completeGoogleSignIn(id, mcp.google.client.getAuthorizationResultFromIntent(data)) }
+        catch (_: Exception) { failGoogleSignIn("Google sign-in did not finish. Try again and approve the requested permissions.") }
+    }
+    private fun failGoogleSignIn(message: String) {
+        pendingGoogleService?.let { connectionState(it, message) }
+        pendingGoogleService = null
+        googleSignInBusy = false
+    }
+    private fun completeGoogleSignIn(id: String, result: com.google.android.gms.auth.api.identity.AuthorizationResult) {
+        pendingGoogleService = null
+        googleSignInBusy = true
+        connectionState(id, "Connecting…")
+        viewModelScope.launch {
+            try {
+                val count = withContext(Dispatchers.IO) { mcp.completeGoogle(id, result) }
+                connectionState(id, "Connected · $count tools")
+                runtime?.invalidate()
+            } catch (e: Exception) { connectionState(id, e.message ?: "Google connection failed. Try again.") }
+            finally { _connections.value = mcp.snapshot(); googleSignInBusy = false }
+        }
+    }
     fun finishLinearSignIn(uri: Uri) {
         connectionState("linear", "Connecting…")
         viewModelScope.launch(Dispatchers.IO) {
@@ -245,7 +292,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             finally { _connections.value = mcp.snapshot() }
         }
     }
-    fun disconnectMcp(id: String) { mcp.disconnect(id); connectionState(id, "Disconnected"); _connections.value = mcp.snapshot(); runtime?.invalidate() }
+    fun disconnectMcp(id: String) { if (pendingGoogleService != null || googleSignInBusy) return; mcp.disconnect(id); connectionState(id, "Disconnected"); _connections.value = mcp.snapshot(); runtime?.invalidate() }
     fun refresh() { prefs.edit().putLong("active_chat", _active.value).apply(); _chats.value = store.chats(); _messages.value = store.messages(_active.value); _models.value = store.models(); _notes.value = store.notes(); _reminders.value = store.reminders(); _scheduledTasks.value = store.scheduledTasks(); _memories.value = store.memories(); _memorySuggestions.value = store.memorySuggestions(); _agentTasks.value = store.agentTasks(); _attachments.value = store.attachments(_active.value); _benchmarks.value = store.benchmarks(); _logs.value = store.actionLog(_active.value); _turns.value = store.turns(_active.value); _pending.value = _turns.value.lastOrNull { it.status == "approval" }?.pending; TodayWidget.updateAll(getApplication()) }
     private fun createChat() = store.newChat(prefs.getBoolean("default_web", false), prefs.getBoolean("default_yolo", false))
     fun newChat() { stop(); store.endChat(_active.value); _active.value = createChat(); refresh() }
@@ -412,6 +459,10 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     }
     fun runBenchmark(model: LocalModel) {
         if (_busy.value || _benchmarking.value != null || downloadJob?.isActive == true) return
+        if (!library.isPhoneAgentSize(model.bytes)) {
+            _status.value = "${model.name} is outside this phone's practical agent-model size range."
+            return
+        }
         val assistant = runtime ?: return
         housekeeping?.cancel()
         viewModelScope.launch {
@@ -427,8 +478,8 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     }
     fun benchmarkPhoneModels() {
         if (_busy.value || _benchmarking.value != null || downloadJob?.isActive == true) return
-        val candidates = _models.value
-        if (candidates.isEmpty()) { _status.value = "Install a model first to measure its speed on this phone."; return }
+        val candidates = _models.value.filter { library.isPhoneAgentSize(it.bytes) }
+        if (candidates.isEmpty()) { _status.value = "No installed model is in this phone's practical agent-model size range. Discover a phone-size candidate first."; return }
         val assistant = runtime ?: run { _status.value = "The model runtime is not ready yet. Try again in a moment."; return }
         housekeeping?.cancel()
         phoneBenchmarkJob = viewModelScope.launch {
@@ -456,7 +507,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
                 phoneBenchmarkJob = null
             }
             refresh()
-            _status.value = if (failures.isEmpty()) "Phone benchmark finished for ${candidates.size} models."
+            _status.value = if (failures.isEmpty()) "Phone benchmark finished for ${candidates.size} phone-size models."
                 else "Benchmark finished with ${failures.size} model${if (failures.size == 1) "" else "s"} unavailable."
         }
     }
@@ -617,7 +668,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
             !Regex("\\b(and|then|also|two|three|four|several|multiple|summari[sz]e|explain|show|read|find)\\b|[;\\n.!?]", RegexOption.IGNORE_CASE).containsMatchIn(original.trim().removeSuffix("."))
         if (simpleWrite) { finishAnswer(chat.id, dispatcher.resultMessage(result)); return }
         _stage.value = "Preparing answer"
-        val raw = try { assistant.generate(AssistantPrompt.toolFollowUp(original, request.name, result)) { _live.value = it } }
+        val raw = try { assistant.generateToolFollowUp(original, request.name, result) { _live.value = it } }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { failAfterTools(chat.id, id, "The tool completed, but Cina could not finish the reply. Retry to continue.", outcomes, dispatcher); return }
         val next = try { parseAction(raw, original, outcomes, assistant, dispatcher) } catch (e: CancellationException) { throw e }
@@ -674,7 +725,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
     fun import(uri: Uri) { viewModelScope.launch { try { val model = library.import(uri); refresh(); setModel(model.path); _status.value = "Model imported." } catch(e: Exception) { _status.value = e.message ?: "Import failed." } } }
     fun searchRepos(query: String) { viewModelScope.launch { try { _repoResults.value = library.search(query) } catch(e: Exception) { _status.value = e.message ?: "Search failed." } } }
     fun openRepo(repo: String) { viewModelScope.launch { try { _remoteFiles.value = library.files(repo) } catch(e: Exception) { _status.value = e.message ?: "Could not list files. Gated models require access on Hugging Face and a token." } } }
-    internal fun download(url: String, name: String, assignTo: ResponseMode? = null) {
+    internal fun download(url: String, name: String) {
         if(downloadJob?.isActive == true) return
         if (_benchmarking.value != null || _busy.value) { _status.value = "Wait for the current model task to finish before downloading."; return }
         downloadPrefs.edit().putString("url", url).putString("name", name).apply()
@@ -684,9 +735,7 @@ class AssistantViewModel(application: Application) : AndroidViewModel(applicatio
                 val model = library.download(url, name) { _download.value = it }
                 downloadPrefs.edit().clear().apply(); _resumable.value = null
                 refresh(); setModel(model.path)
-                if (assignTo == ResponseMode.QUICK || assignTo == ResponseMode.DEEP) assignModel(assignTo, model.path)
-                _status.value = if (assignTo == ResponseMode.QUICK || assignTo == ResponseMode.DEEP) "Model downloaded and assigned to ${assignTo.name.lowercase().replaceFirstChar { it.uppercase() }}."
-                    else "Model downloaded."
+                _status.value = "Model downloaded."
             } catch(e: CancellationException) { _status.value = "Download paused. Start it again to resume." }
             catch(e: Exception) { _download.value = _download.value.copy(running = false, error = e.message ?: "Download failed."); _status.value = e.message ?: "Download failed." }
         }

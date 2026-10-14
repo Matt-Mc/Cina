@@ -70,6 +70,12 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_WIDGET_PROMPT = "widget_prompt"
     }
     private val vm: AssistantViewModel by viewModels()
+    private val googleAuthorization = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        vm.finishGoogleSignIn(result.data, result.resultCode != RESULT_OK)
+    }
+    internal fun connectGoogle(id: String) = vm.startGoogleSignIn(id) { pending ->
+        googleAuthorization.launch(androidx.activity.result.IntentSenderRequest.Builder(pending.intentSender).build())
+    }
     private var scheduledTaskOpenRequest by mutableIntStateOf(0)
     private var widgetPageRequest by mutableStateOf<Pair<Int, String>?>(null)
     private var widgetRequestId = 0
@@ -112,7 +118,7 @@ class MainActivity : ComponentActivity() {
         handleWidgetIntent(intent)
         intent.data?.takeIf { it.scheme == "dev.pocketmuse.cina" }?.let(vm::finishLinearSignIn)
     }
-    override fun onResume() { super.onResume(); ReminderReceiver.recover(this); vm.refresh(); TodayWidget.updateAll(this) }
+    override fun onResume() { super.onResume(); ReminderReceiver.recover(this); DurableWorkScheduler.recover(this); vm.refresh(); TodayWidget.updateAll(this) }
     override fun onStop() { vm.endSession(); super.onStop() }
 
     private fun handleWidgetIntent(intent: Intent?) {
@@ -127,7 +133,8 @@ class MainActivity : ComponentActivity() {
             return
         }
         intent?.getStringExtra(EXTRA_WIDGET_PAGE)?.let { page ->
-            if (page in setOf("Notes", "Scheduled tasks", "Reminders", "Chat")) widgetPageRequest = ++widgetRequestId to page
+            if (page == "Inbox" && !BuildConfig.INBOX_ENABLED) return
+            if (page in setOf("Inbox", "Notes", "Scheduled tasks", "Reminders", "Chat", "Actions")) widgetPageRequest = ++widgetRequestId to page
         }
     }
 
@@ -158,7 +165,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
     var page by rememberSaveable { mutableStateOf("Chat") }
     var modelReturnPage by rememberSaveable { mutableStateOf("Settings") }
     var companionReturnPage by rememberSaveable { mutableStateOf("Settings") }
-    var taskTab by rememberSaveable { mutableIntStateOf(0) }
+    var taskTab by rememberSaveable { mutableIntStateOf(4) }
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     val pageState = rememberSaveableStateHolder()
     val status by vm.status.collectAsState()
@@ -173,6 +180,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
             when (it.second) {
                 "Scheduled tasks" -> { page = "Tasks"; taskTab = 2 }
                 "Reminders" -> { page = "Tasks"; taskTab = 1 }
+                "Actions" -> { page = "Tasks"; taskTab = 3 }
                 else -> page = it.second
             }
         }
@@ -213,7 +221,8 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                             onModels = { modelReturnPage = "Chat"; page = "Models" },
                             onMenu = { menuOpen = true }, onCompanion = { companionReturnPage = "Chat"; page = "Companion" },
                             widgetDraft = widgetDraft, widgetDraftKey = widgetDraftKey)
-                        "Tasks" -> TasksScreen(vm, taskTab, { taskTab = it }, onOpenChat = { page = "Chat" })
+                        "Tasks" -> TasksScreen(vm, taskTab, { taskTab = it }, onOpenChat = { page = "Chat" }, onOpenResult = { kind -> vm.refresh();if(kind=="note") page="Notes" else taskTab=1 })
+                        "Inbox" -> if (BuildConfig.INBOX_ENABLED) InboxScreen()
                         "Notes" -> NotesScreen(vm)
                         "You" -> YouScreen(vm, onEditProfile = { page = "Edit profile" }, onOpenChat = { page = "Chat" })
                         "Edit profile" -> ProfileEditor(profile, onSave = { vm.saveYouProfile(it); page = "You" })
@@ -243,8 +252,9 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                     Text("cina", fontFamily = FontFamily.Serif, fontSize = 38.sp, color = Ink)
                     Text("A little space to think.", color = Muted, fontSize = 13.sp)
                     Spacer(Modifier.height(32.dp))
-                    listOf("Chat" to "Conversations & files", "Tasks" to "Goals, reminders & schedules",
-                        "Notes" to "Things worth keeping", "You" to "Profile & memory", "Settings" to "Models, connections & appearance").forEach { (destination, detail) ->
+                    listOf("Inbox" to "Captured text, links & documents", "Chat" to "Conversations & files", "Tasks" to "Goals, reminders & schedules",
+                        "Notes" to "Things worth keeping", "You" to "Profile & memory", "Settings" to "Models, connections & appearance")
+                        .filter { it.first != "Inbox" || BuildConfig.INBOX_ENABLED }.forEach { (destination, detail) ->
                         val selected = page == destination
                         Row(Modifier.fillMaxWidth().background(if (selected) Soft else Color.Transparent, RoundedCornerShape(16.dp))
                             .clickable { page = destination; menuOpen = false }.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
