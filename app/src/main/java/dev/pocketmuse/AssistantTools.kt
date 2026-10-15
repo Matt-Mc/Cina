@@ -76,9 +76,27 @@ class AssistantTools(private val context: Context, private val store: LocalStore
     suspend fun execute(chat: Chat, request: ToolRequest, scope: String = "chat:${chat.id}"): String = withContext(Dispatchers.IO) {
         val originalKey = request.originalCallKey ?: callKey(request)
         if (ToolCatalog.kind(request.name) == ToolKind.WRITE) store.toolReceipt(scope, originalKey)?.let { return@withContext it }
+        if(scheduledModelPath!=null && ToolCatalog.kind(request.name)==ToolKind.WRITE) {
+            require(scope.startsWith("scheduled:")) { "A scheduled run identity is required." }
+            require(request.name in setOf("create_note","create_reminder")) { "Scheduled prompts can propose local notes or reminders for review; other writes are unavailable." }
+            val origin=java.security.MessageDigest.getInstance("SHA-256").digest("${scope.length}:$scope$originalKey".toByteArray()).joinToString("") { "%02x".format(it) }
+            val task=WorkCoordinator(store).stageScheduled(origin) {
+                val prepared=normalize(request);val args=prepared.arguments
+                if(prepared.name=="create_note") WorkAction("note",args.getString("title"),args.getString("body"))
+                else WorkAction("reminder",args.getString("title"),whenMillis=Instant.parse(args.getString("when_iso")).toEpochMilli())
+            }
+            DurableWorkScheduler.recover(context)
+            return@withContext JSONObject().put("status","pending_approval").put("work_id",task.id)
+                .put("message","Scheduled suggestion saved in Tasks → Actions. Review the task there; this scheduled run has not executed the action.").toString()
+        }
         val prepared = normalize(request)
         val definition = ToolCatalog.get(prepared.name) ?: error("Unknown tool.")
         if (scheduledModelPath != null) require(definition.scheduled) { "This tool is unavailable in scheduled tasks." }
+        if (definition.group == "work") {
+            val result=WorkTools.execute(store, prepared, scope, originalKey)
+            if(definition.kind==ToolKind.WRITE) DurableWorkScheduler.recover(context)
+            return@withContext result
+        }
         val a = prepared.arguments
         val key = callKey(prepared)
         if (definition.kind == ToolKind.WRITE) store.toolReceipt(scope, key)?.let { return@withContext it }

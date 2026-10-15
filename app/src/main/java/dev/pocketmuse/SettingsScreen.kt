@@ -126,7 +126,7 @@ internal fun ConnectionsScreen(vm: AssistantViewModel) {
     }
     Page("Connections", "Bring your services into a conversation when you need them.") {
         Text("Connect a service to let Cina use its available tools. Actions ask before they run unless you always allow that tool or enable YOLO mode.", color = Muted, fontSize = 13.sp)
-        Text("Sign in with Linear directly. Other services currently need a token; Google Workspace also requires Google Cloud OAuth setup.", color = Muted, fontSize = 12.sp)
+        Text("Connect Google or Linear with your account. Google asks for access only to the service you choose.", color = Muted, fontSize = 12.sp)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             SectionTitle("Your connections")
             Spacer(Modifier.weight(1f))
@@ -135,33 +135,47 @@ internal fun ConnectionsScreen(vm: AssistantViewModel) {
         if (connections.none { it.connected || it.preset.id.startsWith("custom_") }) Text("No services connected. Add one when you need it.", color = Muted)
         if (showAvailable) {
             SectionTitle("Sign in ready")
-            Text("Linear opens a sign-in page in your browser.", color = Muted, fontSize = 12.sp)
+            Text("Choose a service, select your account, and approve access.", color = Muted, fontSize = 12.sp)
             TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if(showAdvanced) "Hide advanced setup" else "Advanced · tokens & custom servers") }
             if(showAdvanced) TextButton(onClick = { showCustom = true }) { Text("Add a custom MCP server") }
         }
-        connections.filter { it.connected || it.preset.id.startsWith("custom_") || (showAvailable && (it.preset.id == "linear" || showAdvanced)) }.sortedByDescending { it.connected }.forEach { connection ->
+        connections.filter { it.connected || it.preset.id.startsWith("custom_") || (showAvailable && (GoogleService.supports(it.preset.id) || it.preset.id == "linear" || showAdvanced)) }.sortedByDescending { it.connected }.forEach { connection ->
             val preset = connection.preset
             Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(16.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(preset.title, color = Ink, fontWeight = FontWeight.SemiBold)
+                        connection.account?.let {
+                            Text(it, color = Muted, fontSize = 12.sp)
+                            Text(GoogleService.accessLabel(preset.id), color = Muted, fontSize = 11.sp)
+                        }
                         if(preset.id.startsWith("custom_")) Text(preset.url, color = Muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(states[preset.id] ?: if(connection.connected && connection.toolCount > 0) "Connected · ${connection.toolCount} tools" else if(connection.connected) "Reconnect to load tools" else "Not connected", color = Muted, fontSize = 12.sp)
                     }
-                    if(connection.connected) TextButton(onClick = { vm.disconnectMcp(preset.id); expandedConnection = null; mcpToken = "" }) { Text("Disconnect") }
+                    if(connection.connected) TextButton(onClick = { vm.disconnectMcp(preset.id); expandedConnection = null; mcpToken = "" }, enabled = states.values.none { it == "Waiting for Google…" || it == "Connecting…" }) { Text("Disconnect") }
                     TextButton(onClick = { expandedConnection = if(expandedConnection == preset.id) null else preset.id; mcpToken = "" }) {
-                        Text(if(connection.connected) "Reconnect" else if(preset.id == "linear") "Sign in" else "Set up")
+                        Text(if(connection.connected) "Reconnect" else if(preset.id == "linear" || GoogleService.supports(preset.id)) "Sign in" else "Set up")
                     }
                 }
                 if(preset.id.startsWith("custom_")) TextButton(onClick = { vm.removeMcpServer(preset.id); expandedConnection = null; mcpToken = "" }) { Text("Remove server") }
                 if(expandedConnection == preset.id) {
-                    if(preset.id == "linear") {
-                        Button(onClick = { vm.startLinearSignIn(activity) }) { Text("Sign in with Linear") }
-                        Text("Or connect with an API key or existing OAuth token", color = Muted, fontSize = 12.sp)
-                    } else Text(preset.hint, color = Muted, fontSize = 12.sp)
-                    OutlinedTextField(mcpToken, { mcpToken = it }, label = { Text(if(preset.id == "linear") "API key or access token" else if(preset.id.startsWith("custom_")) "Bearer token (if needed)" else "Access token") },
-                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    Button(onClick = { vm.connectMcp(preset.id, mcpToken) }, enabled = states[preset.id] != "Connecting…" && (mcpToken.isNotBlank() || preset.id.startsWith("custom_"))) { Text(if(states[preset.id] == "Connecting…") "Connecting…" else "Connect") }
+                    if (GoogleService.supports(preset.id)) {
+                        Text(GoogleService.accessLabel(preset.id), color = Muted, fontSize = 12.sp)
+                        Button(onClick = { (activity as MainActivity).connectGoogle(preset.id) }, enabled = states.values.none { it == "Waiting for Google…" || it == "Connecting…" }) { Text("Connect with Google") }
+                        Text("Disconnect stops Cina's access on this device. To revoke Google's permission for Cina across services, visit your Google Account connections.", color = Muted, fontSize = 12.sp)
+                        TextButton(onClick = { activity.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://myaccount.google.com/connections"))) }) { Text("Manage Google permissions") }
+                        TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if (showAdvanced) "Hide advanced options" else "Advanced options") }
+                    }
+                    if (!GoogleService.supports(preset.id) || showAdvanced) {
+                        if(preset.id == "linear") {
+                            Button(onClick = { vm.startLinearSignIn(activity) }) { Text("Sign in with Linear") }
+                            Text("Or connect with an API key or existing OAuth token", color = Muted, fontSize = 12.sp)
+                        } else Text(preset.hint, color = Muted, fontSize = 12.sp)
+                        if (GoogleService.supports(preset.id)) Text("Legacy hosted MCP connection. Requires your own MCP setup and manual token renewal.", color = Muted, fontSize = 12.sp)
+                        OutlinedTextField(mcpToken, { mcpToken = it }, label = { Text(if(preset.id == "linear") "API key or access token" else if(preset.id.startsWith("custom_")) "Bearer token (if needed)" else "Access token") },
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        Button(onClick = { vm.connectMcp(preset.id, mcpToken) }, enabled = states.values.none { it == "Waiting for Google…" || it == "Connecting…" } && (mcpToken.isNotBlank() || preset.id.startsWith("custom_"))) { Text(if(states[preset.id] == "Connecting…") "Connecting…" else "Connect") }
+                    }
                 }
             }
         }

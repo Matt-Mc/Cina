@@ -14,12 +14,38 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import org.junit.Rule
 import org.junit.Test
 
 class NavigationTest {
     @get:Rule(order = 0) val permissions = NotificationPermissionRule()
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun inboxManualCaptureCanBeOpenedAndDeletedWithoutAModel() {
+        val marker = "Inbox UI ${java.util.UUID.randomUUID()}"
+        try {
+            compose.onNodeWithContentDescription("Open menu").performClick()
+            compose.onNodeWithText("Inbox").performClick()
+            compose.onNodeWithText("Something to keep").performTextInput(marker)
+            compose.onNodeWithText("Save to Inbox").performClick()
+            compose.waitUntil(10_000) {
+                LocalStore(ApplicationProvider.getApplicationContext()).use { InboxRepository(it).items().any { item -> item.title == marker } }
+            }
+            compose.onAllNodesWithText("Open")[0].performScrollTo().performClick()
+            compose.onNodeWithText("Delete captured item").performScrollTo().performClick()
+            compose.onNodeWithText("Delete", useUnmergedTree = true).performClick()
+            compose.waitUntil(10_000) {
+                LocalStore(ApplicationProvider.getApplicationContext()).use { InboxRepository(it).items().none { item -> item.title == marker } }
+            }
+            compose.onNodeWithText("Something to keep").assertIsDisplayed()
+        } finally {
+            LocalStore(ApplicationProvider.getApplicationContext()).use { store ->
+                val inbox = InboxRepository(store)
+                inbox.items().filter { it.title == marker }.forEach { inbox.delete(it.id) }
+            }
+        }
+    }
 
     @Test fun responseModesAndLocalTimingsAreAccessible() {
         compose.onNodeWithContentDescription("Open menu").performClick()
@@ -32,9 +58,9 @@ class NavigationTest {
         compose.onNodeWithText("Local response timings").assertIsDisplayed()
     }
 
-    @Test fun drawerGroupsFeaturesIntoFiveDestinations() {
+    @Test fun drawerIncludesInboxAlongsideExistingDestinations() {
         compose.onNodeWithContentDescription("Open menu").performClick()
-        listOf("Chat", "Tasks", "Notes", "You", "Settings").forEach {
+        listOf("Inbox", "Chat", "Tasks", "Notes", "You", "Settings").forEach {
             compose.onNodeWithText(it).assertIsDisplayed()
         }
         listOf("Models", "Memory", "Scheduled tasks").forEach {

@@ -89,6 +89,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                                 val result = try { tools.execute(chat, request, "scheduled:$id:$executionTime") }
                                     catch (e: CancellationException) { throw e }
                                     catch (e: Exception) { tools.failure(e) }
+                                if(org.json.JSONObject(result).optString("status")=="pending_approval") return@withTimeout tools.resultMessage(result)
                                 require(tools.succeeded(result)) { tools.resultMessage(result) }
                                 results.add(result)
                                 confirmedResults = tools.confirmedResults(results)

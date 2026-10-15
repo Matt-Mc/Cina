@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ResponsePolicyTest {
+    @Test fun explicitPlansExcludeImmediateWritesWithoutChangingOrdinaryNotes() {
+        val plan=ToolCatalog.select("Append a note to this local action plan")
+        assertTrue(plan.any { it.name=="append_work_step" })
+        assertFalse(plan.any { it.name=="draft_work_step" })
+        assertFalse(plan.any { it.name=="create_note" || it.name=="create_scheduled_task" })
+        assertTrue(ToolCatalog.select("Save a note about my travel plans").any { it.name=="create_note" })
+    }
     @Test fun autoKeepsOrdinaryQuestionsQuickAndRoutesComplexWorkDeep() {
         assertEquals(ResponseMode.QUICK, ResponsePolicy.resolve(ResponseMode.AUTO, "I'm traveling to Lisbon next week, what should I pack?"))
         assertEquals(ResponseMode.DEEP, ResponsePolicy.resolve(ResponseMode.AUTO, "Compare the tradeoffs of these itineraries"))

@@ -23,14 +23,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 
 @Composable
-internal fun TasksScreen(vm: AssistantViewModel, tab: Int, onTab: (Int) -> Unit, onOpenChat: () -> Unit) {
+internal fun TasksScreen(vm: AssistantViewModel, tab: Int, onTab: (Int) -> Unit, onOpenChat: () -> Unit, onOpenResult: (String) -> Unit) {
     LaunchedEffect(Unit) { while (true) { delay(5_000); vm.refresh() } }
     Page("Tasks", "Plans to follow, things to remember, and prompts for later.") {
-        ScreenTabs(listOf("Goals", "Reminders", "Scheduled"), tab, onTab)
+        TextButton(onClick={ onTab(4) }) { Text("Work overview") }
+        ScreenTabs(listOf("Goals", "Reminders", "Scheduled", "Actions"), tab, onTab)
         when (tab) {
             0 -> GoalsContent(vm, onOpenChat)
             1 -> RemindersContent(vm)
-            else -> ScheduledContent(vm)
+            2 -> ScheduledContent(vm)
+            3 -> DurableWorkContent(onOpenResult)
+            else -> WorkOverview(vm,onTab)
         }
     }
 }
@@ -161,7 +164,7 @@ private fun ScheduledContent(vm: AssistantViewModel) {
         TextButton(onClick = { editingId = null; title = ""; prompt = ""; whenMillis = null; repeat = "once"; modelPath = selectedModel.orEmpty(); adding = true }) { Text("+ Schedule") }
     }
     NotificationPermissionNotice()
-    Text("Runs on this phone in the background. Android may start it late. Connected services are unavailable.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+    Text("Runs on this phone in the background. Proposed notes and reminders wait for review in Actions. Android may start prompts late. Connected services are unavailable.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
     if (tasks.isEmpty()) EmptyState("Something for later", "Schedule a one-time, daily, or weekly prompt. Cina saves the result and notifies you when it is ready.")
     tasks.forEach { task ->
         Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

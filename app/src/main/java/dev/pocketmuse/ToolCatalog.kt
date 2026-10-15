@@ -33,6 +33,12 @@ internal object ToolCatalog {
     private fun s(name: String, required: Boolean = true, max: Int = 2000) = ToolField(name, required = required, max = max)
     private fun id(name: String = "id", required: Boolean = true) = ToolField(name, "integer", required)
     val definitions = listOf(
+        ToolDefinition("list_work", "Find work", "work", ToolKind.READ, "List local action plans with IDs and revisions. Empty query lists all. Use read_work for full steps.", listOf(s("query", max=200),id("offset",false)), true),
+        ToolDefinition("read_work", "Read plan", "work", ToolKind.READ, "Read steps, results and revision before changing a plan. Long note bodies are previews; review full content in Actions.", listOf(s("work_id",max=80)), true),
+        ToolDefinition("draft_work_step", "Start plan draft", "work", ToolKind.WRITE, "Start a NEW local plan with one note or reminder. Notes need body and no time; reminders need when_text and no body. Copy exact title, body and time phrase from the user. Saves a draft only. For an existing plan use append_work_step.", listOf(ToolField("kind",choices=listOf("note","reminder")),s("title",max=160),s("body",false,12000),s("when_text",false,200))),
+        ToolDefinition("append_work_step", "Append plan step", "work", ToolKind.WRITE, "Append one step to an EXISTING plan. Copy work_id and revision from read_work or the last draft result. Notes need body and no time; reminders need when_text and no body. Copies exact user content; requires fresh approval.", listOf(s("work_id",max=80),id("revision"),ToolField("kind",choices=listOf("note","reminder")),s("title",max=160),s("body",false,12000),s("when_text",false,200))),
+        ToolDefinition("schedule_work", "Set plan start", "work", ToolKind.WRITE, "Set when an EXISTING local plan starts. Copy work_id and revision from its result, and when_text from the user's time phrase. This changes the plan's start time, not its steps. Requires fresh approval.",listOf(s("work_id",max=80),id("revision"),s("when_text",max=200))),
+        ToolDefinition("manage_work", "Change plan", "work", ToolKind.WRITE, "Read the plan first. Pause, cancel, or resume it; resume requires fresh approval. No command approves or executes work.", listOf(s("work_id",max=80),id("revision"),ToolField("command",choices=listOf("pause","cancel","resume")))),
         ToolDefinition("local_find", "Find available actions", "discovery", ToolKind.DISCOVERY, "Find local tools. Empty query lists all enabled tools.", listOf(s("query", max = 200))),
         ToolDefinition("find_skill", "Find a procedure", "discovery", ToolKind.DISCOVERY, "Load one enabled procedure for this request.", listOf(s("query", max = 200))),
         ToolDefinition("create_note", "Save note", "notes", ToolKind.WRITE, "Save a requested note. Do not save a plan unless asked.", listOf(s("title", max = 200), s("body", max = 12000)), true),
@@ -45,7 +51,7 @@ internal object ToolCatalog {
         ToolDefinition("search_reminders", "Find reminders", "reminders", ToolKind.READ, "Find open reminders and IDs; empty query lists all open reminders.", listOf(s("query", max = 200)), true),
         ToolDefinition("complete_reminder", "Complete reminder", "reminders", ToolKind.WRITE, "Complete the requested reminder using its ID.", listOf(id())),
         ToolDefinition("reschedule_reminder", "Reschedule reminder", "reminders", ToolKind.WRITE, "Move an existing reminder. Copy the requested time into when_text; omitted title is preserved.", listOf(id(), s("title", false, 200), s("when_text", false, 200), s("when_iso", false, 100))),
-        ToolDefinition("create_scheduled_task", "Schedule prompt", "schedules", ToolKind.WRITE, "Run a requested prompt later on this phone. Requires a time and repeat; no web or connected services in background.", listOf(s("title", max = 100), s("prompt"), s("when_text", false, 200), s("when_iso", false, 100), ToolField("repeat", choices = listOf("once", "daily", "weekly"))), true),
+        ToolDefinition("create_scheduled_task", "Schedule prompt", "schedules", ToolKind.WRITE, "Run a requested prompt later on this phone. Requires a time and repeat; no web or connected services in background.", listOf(s("title", max = 100), s("prompt"), s("when_text", false, 200), s("when_iso", false, 100), ToolField("repeat", choices = listOf("once", "daily", "weekly")))),
         ToolDefinition("list_scheduled_tasks", "List schedules", "schedules", ToolKind.READ, "List scheduled prompts and their state.", emptyList(), true),
         ToolDefinition("search_attachments", "Read attached files", "files", ToolKind.READ, "Search this chat's files; cite file and passage. Empty query returns starting passages.", listOf(s("query", max = 400))),
         ToolDefinition("search_memories", "Find saved details", "memory", ToolKind.READ, "Read saved user facts and IDs; empty query lists recent facts.", listOf(s("query", max = 200))),
@@ -60,22 +66,33 @@ internal object ToolCatalog {
     )
     fun get(name: String) = definitions.firstOrNull { it.name == name }
     fun kind(name: String) = get(name)?.kind ?: ToolKind.WRITE
-    fun schema(scheduled: Boolean = false, onlyName: String? = null): String = JSONObject().put("oneOf", org.json.JSONArray(
-        definitions.filter { (!scheduled || it.scheduled) && (onlyName == null || it.name == onlyName) }.map { tool ->
+    fun schema(scheduled: Boolean = false, onlyName: String? = null, onlyNames: Set<String>? = null): String = JSONObject().put("oneOf", org.json.JSONArray(
+        definitions.filter { (!scheduled || it.scheduled) && (onlyName == null || it.name == onlyName) && (onlyNames==null || it.name in onlyNames) }.map { tool ->
             val properties = JSONObject()
             tool.fields.forEach { field -> properties.put(field.name, JSONObject().put("type", field.type).apply {
                 if (field.choices.isNotEmpty()) put("enum", org.json.JSONArray(field.choices))
             }) }
+            val arguments=JSONObject().put("type","object").put("properties",properties)
+                .put("required",org.json.JSONArray(tool.fields.filter { it.required }.map { it.name })).put("additionalProperties",false)
+            val argumentSchema=if(tool.name in setOf("draft_work_step","append_work_step")) {
+                JSONObject().put("oneOf",org.json.JSONArray(listOf("note","reminder").map { kind ->
+                    val branch=JSONObject(arguments.toString());val fields=branch.getJSONObject("properties")
+                    fields.remove(if(kind=="note") "when_text" else "body")
+                    fields.put("kind",JSONObject().put("const",kind))
+                    branch.getJSONArray("required").put(if(kind=="note") "body" else "when_text")
+                    branch
+                }))
+            } else arguments
             JSONObject().put("type", "object").put("additionalProperties", false)
                 .put("required", org.json.JSONArray(listOf("name", "arguments")))
                 .put("properties", JSONObject().put("name", JSONObject().put("const", tool.name))
-                    .put("arguments", JSONObject().put("type", "object").put("properties", properties)
-                        .put("required", org.json.JSONArray(tool.fields.filter { it.required }.map { it.name })).put("additionalProperties", false)))
+                    .put("arguments",argumentSchema))
         })).toString()
     fun select(request: String, recent: String = "", hasFiles: Boolean = false, web: Boolean = false,
         memory: Boolean = true, connected: Boolean = false, scheduled: Boolean = false, all: Boolean = false): List<ToolDefinition> {
         val groups = ResponsePolicy.toolGroups(request + "\n" + recent) + if (hasFiles) setOf("files") else emptySet()
         return definitions.filter { tool ->
+            (all || !ResponsePolicy.workFocused(request) || tool.name in ResponsePolicy.workTools(request)) &&
             (!scheduled || tool.scheduled) && (memory || tool.group != "memory") &&
                 (web || tool.group != "web") && (connected || tool.group != "connections") &&
                 (scheduled || all || tool.group in groups || tool.group in setOf("discovery", "web", "connections"))
@@ -85,8 +102,9 @@ internal object ToolCatalog {
         Request exactly one tool with no other text: [tool]{"name":"tool_name","arguments":{"key":"value"}}[/tool]
         Always use the literal [tool] and [/tool] tags. Put the tool name in JSON, never in a tag or function call.
         Use only the tools below. Required fields have no ?. Never guess missing required details.
-        ${if (scheduled) "This is unattended work. If details are missing, report what is missing in the saved result; do not wait for a reply." else "If required details are missing, ask one focused question."}
+        ${if (scheduled) "This is unattended work. Note/reminder writes become suggestions requiring approval in Tasks; they are not executed here. If details are missing, report them in the saved result." else "If required details are missing, ask one focused question."}
         Results contain status and message. Only status=success confirms completion. Never repeat a completed action.
+        ${if(tools.any { it.group=="work" }) "A saved draft is NOT an executed action. You cannot approve plans: the user must review them in Tasks → Actions. Never say paused or scheduled before a tool confirms it. Copy work_id and revision exactly from a tool result. Use only the listed controls." else ""}
         ${tools.joinToString("\n") { it.instructionLine() }}
     """.trimIndent()
 }
