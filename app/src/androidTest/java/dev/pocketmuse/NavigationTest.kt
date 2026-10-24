@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
+import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -15,6 +16,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.graphics.asAndroidBitmap
+import java.io.File
 import org.junit.Rule
 import org.junit.Test
 
@@ -22,13 +27,22 @@ class NavigationTest {
     @get:Rule(order = 0) val permissions = NotificationPermissionRule()
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    private fun capture(name: String) {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        File(context.getExternalFilesDir(null), name).outputStream().use { stream ->
+            compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+        }
+    }
+
     @Test fun inboxManualCaptureCanBeOpenedAndDeletedWithoutAModel() {
         val marker = "Inbox UI ${java.util.UUID.randomUUID()}"
         try {
             compose.onNodeWithContentDescription("Open menu").performClick()
+            compose.onNodeWithText("Library").performClick()
             compose.onNodeWithText("Inbox").performClick()
             compose.onNodeWithText("Something to keep").performTextInput(marker)
-            compose.onNodeWithText("Save to Inbox").performClick()
+            closeSoftKeyboard()
+            compose.onNodeWithText("Save to Inbox").performScrollTo().assertIsDisplayed().performClick()
             compose.waitUntil(10_000) {
                 LocalStore(ApplicationProvider.getApplicationContext()).use { InboxRepository(it).items().any { item -> item.title == marker } }
             }
@@ -58,14 +72,21 @@ class NavigationTest {
         compose.onNodeWithText("Local response timings").assertIsDisplayed()
     }
 
-    @Test fun drawerIncludesInboxAlongsideExistingDestinations() {
+    @Test fun drawerGroupsSavedMaterialAndWorkIntoFourDestinations() {
         compose.onNodeWithContentDescription("Open menu").performClick()
-        listOf("Inbox", "Chat", "Tasks", "Notes", "You", "Settings").forEach {
+        listOf("Chat", "Library", "Work", "Settings").forEach {
             compose.onNodeWithText(it).assertIsDisplayed()
         }
-        listOf("Models", "Memory", "Scheduled tasks").forEach {
+        listOf("Inbox", "Notes", "You", "Models", "Memory", "Scheduled tasks").forEach {
             compose.onAllNodesWithText(it).assertCountEquals(0)
         }
+        capture("consolidated-menu.png")
+        compose.onNodeWithText("Library").performClick()
+        listOf("Inbox", "Notes", "Knowledge & projects", "Memory").forEach { compose.onNodeWithText(it).assertIsDisplayed() }
+        capture("consolidated-library.png")
+        compose.onNodeWithText("Notes").performClick()
+        compose.onNodeWithContentDescription("Go back").performClick()
+        compose.onNodeWithText("Knowledge & projects").assertIsDisplayed()
     }
 
     @Test fun openingModelManagementPreservesChatDraftAndUsesCompactActions() {
@@ -94,12 +115,15 @@ class NavigationTest {
         compose.onNodeWithText(draft).assertIsDisplayed()
     }
 
-    @Test fun memoryIsAvailableFromYou() {
+    @Test fun memoryIsAvailableFromLibraryAndProfileFromSettings() {
         compose.onNodeWithContentDescription("Open menu").performClick()
-        compose.onNodeWithText("You").performClick()
-        compose.onNodeWithText("About you").assertIsSelected()
-        compose.onAllNodesWithText("Memory")[0].performClick()
+        compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("Memory").performClick()
         compose.onNodeWithText("Every suggested detail needs your review", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithText("About you").performClick()
+        compose.onNodeWithText("About you").assertIsSelected()
     }
 }
 

@@ -3,6 +3,9 @@ package dev.pocketmuse
 import org.json.JSONObject
 
 internal enum class ToolKind { DISCOVERY, READ, WRITE }
+internal data class ToolMenu(val selected: List<ToolDefinition>, val available: List<ToolDefinition>) {
+    val names: Set<String> get() = selected.map { it.name }.toSet()
+}
 internal data class ToolField(val name: String, val type: String = "string", val required: Boolean = true,
     val max: Int = 2000, val choices: List<String> = emptyList())
 internal data class ToolDefinition(val name: String, val label: String, val group: String, val kind: ToolKind,
@@ -104,7 +107,7 @@ internal object ToolCatalog {
         Use only the tools below. Required fields have no ?. Never guess missing required details.
         ${if (scheduled) "This is unattended work. Note/reminder writes become suggestions requiring approval in Tasks; they are not executed here. If details are missing, report them in the saved result." else "If required details are missing, ask one focused question."}
         Results contain status and message. Only status=success confirms completion. Never repeat a completed action.
-        ${if(tools.any { it.group=="work" }) "A saved draft is NOT an executed action. You cannot approve plans: the user must review them in Tasks → Actions. Never say paused or scheduled before a tool confirms it. Copy work_id and revision exactly from a tool result. Use only the listed controls." else ""}
+        ${if(tools.any { it.group=="work" }) "A saved draft is NOT an executed action. You cannot approve plans: the user must review them in Work → Actions. Never say paused or scheduled before a tool confirms it. Copy work_id and revision exactly from a tool result. Use only the listed controls." else ""}
         ${tools.joinToString("\n") { it.instructionLine() }}
     """.trimIndent()
 }

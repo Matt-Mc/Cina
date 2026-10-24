@@ -23,15 +23,17 @@ internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit
     val models by vm.models.collectAsState()
     val connections by vm.connections.collectAsState()
     val profile by vm.youProfile.collectAsState()
+    val home by vm.homeState.collectAsState()
     Page("Settings", "A few choices to make Cina yours.") {
+        NavigationRow("About you", "Profile and response preferences") { onNavigate("You") }
         NavigationRow("Responses", "Speed, model choices & response timings") { onNavigate("Response settings") }
         NavigationRow("Models", "${models.size} installed · downloads & access", { onNavigate("Models") })
         NavigationRow("Skills", "${skills.count { it.enabled }} enabled · familiar tasks & instructions", { onNavigate("Skills") })
-        NavigationRow("Connections", "${connections.count { it.connected }} connected · services & tools", { onNavigate("Connections") })
-        NavigationRow("Companion", "${profile.petName.ifBlank { "Cina" }} · appearance & name", { onNavigate("Companion") })
+        NavigationRow("Connections", "${connections.count { it.connected } + if(home.paired) 1 else 0} connected · services & tools", { onNavigate("Connections") })
+        NavigationRow("Appearance", "${profile.petName.ifBlank { "Cina" }} · appearance & name", { onNavigate("Companion") })
         NavigationRow("Chat & permissions", "New chat defaults & action approvals", { onNavigate("Chat preferences") })
         NavigationRow("About & updates", "Version ${BuildConfig.VERSION_NAME}", { onNavigate("About") })
-        Text("Conversations, notes, and personal details stay on this phone. Connected services receive data when you use them.",
+        Text("Conversations and personal details are stored on this phone. Home receives chat excerpts and attached passages when you choose a Home model. Connected services receive data when you use them.",
             color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
     }
 }
@@ -40,6 +42,7 @@ internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit
 internal fun ResponseSettings(vm: AssistantViewModel) {
     val mode by vm.responseMode.collectAsState()
     val models by vm.models.collectAsState()
+    val home by vm.homeState.collectAsState()
     val samples by vm.performanceSamples.collectAsState()
     var assigning by remember { mutableStateOf<ResponseMode?>(null) }
     var showTimings by remember { mutableStateOf(false) }
@@ -53,11 +56,13 @@ internal fun ResponseSettings(vm: AssistantViewModel) {
     Text("Auto uses Quick for ordinary requests and Deep for complex work. Quick disables thinking when the model supports it. Both modes can use the same model.", color = Muted, fontSize = 12.sp)
     listOf(ResponseMode.QUICK, ResponseMode.DEEP).forEach { choice ->
         val path = remember(revision, models) { vm.assignedModel(choice) }
-        TextButton(onClick = { assigning = choice }) { Text("${choice.name.lowercase().replaceFirstChar { it.uppercase() }} model: ${models.firstOrNull { it.path == path }?.name ?: "Use selected model"}") }
+        TextButton(onClick = { assigning = choice }) { Text("${choice.name.lowercase().replaceFirstChar { it.uppercase() }} model: ${if(choice == ResponseMode.DEEP && home.deepModel != null) "${home.deepModel} · Home" else models.firstOrNull { it.path == path }?.name ?: "Use selected model"}") }
     }
     TextButton(onClick = { showTimings = true }) { Text("Response timings · ${samples.size} recent runs") }
-    if (assigning != null) AlertDialog(onDismissRequest = { assigning = null }, title = { Text("Choose local model") }, text = {
+    if(home.deepModel != null) Text("Deep analysis uses Home when reachable. Other requests use your phone model. Once submitted, a Home job stays on Home until its outcome is known.", color = Muted, fontSize = 12.sp)
+    if (assigning != null) AlertDialog(onDismissRequest = { assigning = null }, title = { Text("Choose model") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState())) {
+            if(assigning == ResponseMode.DEEP) home.models.forEach { model -> TextButton(onClick = { vm.assignHomeDeep(model.name); revision++; assigning = null }) { Text("${model.name} · Home analysis") } }
             TextButton(onClick = { vm.assignModel(assigning!!, null); revision++; assigning = null }) { Text("Use selected model") }
             models.forEach { model -> TextButton(onClick = { vm.assignModel(assigning!!, model.path); revision++; assigning = null }) { Text(model.name) } }
         }
@@ -111,6 +116,7 @@ internal fun AboutScreen(updateStatus: String, onCheckUpdates: () -> Unit) {
 internal fun ConnectionsScreen(vm: AssistantViewModel) {
     val activity = checkNotNull(LocalActivity.current) as ComponentActivity
     val connections by vm.connections.collectAsState()
+    val home by vm.homeState.collectAsState()
     var expandedConnection by rememberSaveable { mutableStateOf<String?>(null) }
     var mcpToken by remember { mutableStateOf("") }
     var customName by rememberSaveable { mutableStateOf("") }
@@ -132,7 +138,8 @@ internal fun ConnectionsScreen(vm: AssistantViewModel) {
             Spacer(Modifier.weight(1f))
             TextButton(onClick = { showAvailable = !showAvailable }) { Text(if (showAvailable) "Hide available" else "+ Add") }
         }
-        if (connections.none { it.connected || it.preset.id.startsWith("custom_") }) Text("No services connected. Add one when you need it.", color = Muted)
+        HomeConnectionRow(vm, showAvailable)
+        if (!home.paired && connections.none { it.connected || it.preset.id.startsWith("custom_") }) Text("No services connected. Add one when you need it.", color = Muted)
         if (showAvailable) {
             SectionTitle("Sign in ready")
             Text("Choose a service, select your account, and approve access.", color = Muted, fontSize = 12.sp)

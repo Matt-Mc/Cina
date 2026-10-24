@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-21",
+  "suite": "native-work-v2-and-two-step-continuation",
+  "environment": {
+    "kind": "Android emulator, CPU inference",
+    "device": "sdk_gphone64_x86_64",
+    "android": "16",
+    "abi": "x86_64",
+    "allocatedRamMiB": 6144
+  },
+  "appSha256": "b72a1d3e2fca056e2aef228852f61ad424897755d8444de8c08708a1d1b19a73",
+  "testApkSha256": "bad6ffb3b38a0f47b390e396dd6402d5b4f93e3fdae4783de8413c5a96850e12",
+  "results": [
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+      "repeats": 1,
+      "controlsPassed": 5,
+      "controlsTotal": 8,
+      "continuationPassed": false,
+      "suitePassed": false,
+      "evidenceComplete": true,
+      "wholeSuiteElapsedMs": 80235
+    },
+    {
+      "model": "Qwen3-1.7B-Q8_0.gguf",
+      "sha256": "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a",
+      "repeats": 1,
+      "controlsPassed": 7,
+      "controlsTotal": 8,
+      "continuationPassed": true,
+      "suitePassed": false,
+      "evidenceComplete": true,
+      "wholeSuiteElapsedMs": 260785
+    }
+  ],
+  "limits": [
+    "Single screening run per model; not a measured general success rate.",
+    "Eight fixed controls plus one continuation fixture; no held-out workflow results.",
+    "Emulator timings are not phone or Ryzen 5600X/RTX 3070 timings.",
+    "No 4B, 8B or newer-family models were measured in this slice.",
+    "Fresh baselines do not establish a causal improvement over historical scores."
+  ],
+  "applicationChecks": {
+    "unitPassed": 69,
+    "androidPassed": 108,
+    "androidOptInSkipped": 8,
+    "lintErrors": 0,
+    "lintWarnings": 66
+  }
+}

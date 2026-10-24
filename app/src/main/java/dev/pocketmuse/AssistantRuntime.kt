@@ -12,9 +12,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withTimeout
 
-class AssistantRuntime(context: Context, private val store: LocalStore,
+class AssistantRuntime internal constructor(context: Context, private val store: LocalStore,
     private val engine: InferenceEngine = AiChat.getInferenceEngine(context),
-    private val toolsSpecification: (Boolean, String, String, Boolean) -> String) {
+    private val toolsSelection: (Boolean, String, String, Boolean) -> ToolMenu) {
     private val skillStore = SkillStore(context)
     private val settings = context.getSharedPreferences("settings", 0)
     internal val performance = LocalPerformance(context)
@@ -24,6 +24,10 @@ class AssistantRuntime(context: Context, private val store: LocalStore,
     private var recoveries = 0
     private var actionRepairs = 0
     private var actionSchema = ""
+    private var selectedToolNames = emptySet<String>()
+    private var availableToolNames = emptySet<String>()
+    private var discoveryQuery: String? = null
+    private var loadedHasFiles = false
     private var continuingPlanId: String? = null
     private var conversationTokens = 0
     internal fun startMeasurement(model: LocalModel, selected: ResponseMode, submittedAt: Long = android.os.SystemClock.elapsedRealtime()) {
@@ -57,6 +61,7 @@ class AssistantRuntime(context: Context, private val store: LocalStore,
         request: String = store.messages(chat.id).lastOrNull { it.role == "user" }?.body.orEmpty(), turnId: Long? = null, executionScope: String? = null) {
         val latest = request
         continuingPlanId=null
+        discoveryQuery=null
         val skillInstructions = ResponsePolicy.skills(skillStore.read(), latest)
         prepare(model)
         performance.mark("model_ready_ms")
@@ -76,7 +81,11 @@ class AssistantRuntime(context: Context, private val store: LocalStore,
         val time = java.time.ZonedDateTime.now().toString()
         val recentRequests = previousMessages.filter { it.role == "user" }.takeLast(2).joinToString("\n") { it.body.take(500) }
         recentUserRequests = recentRequests
-        val specification = toolsSpecification(chat.web, latest, recentRequests, store.attachments(chat.id).isNotEmpty())
+        loadedHasFiles = store.attachments(chat.id).isNotEmpty()
+        val menu = toolsSelection(chat.web, latest, recentRequests, loadedHasFiles)
+        selectedToolNames = menu.names
+        availableToolNames = menu.available.map { it.name }.toSet()
+        val specification = ToolCatalog.render(menu.selected, scheduled = chat.id == 0L)
         val scope = executionScope ?: turnId?.let { store.executionScope(chat.id, it) } ?: store.activeAgentTask(chat.id)?.let { "goal:${it.id}" }
         val receipts = ConversationContext.bounded(scope?.let { store.toolHistory(it).joinToString("\n") }.orEmpty(), actualCapacity / 8, engine::countTokens)
         val taskSummary = summary + if (receipts.isBlank()) "" else "\nConfirmed action ledger (do not repeat):\n$receipts"
@@ -97,7 +106,7 @@ class AssistantRuntime(context: Context, private val store: LocalStore,
         require(conversationTokens + engine.countTokens(latest) + 128 < actualCapacity) { "This request and context are too large for the selected model. Shorten the request or disable unused skills." }
         engine.resetSystemPrompt(finalPrompt)
         assistantSystemPrompt = finalPrompt
-        actionSchema = ToolCatalog.schema(scheduled = chat.id == 0L,onlyNames=if(ResponsePolicy.workFocused(latest)) ResponsePolicy.workTools(latest) else null)
+        actionSchema = ToolCatalog.schema(scheduled = chat.id == 0L, onlyNames = selectedToolNames)
         engine.setToolSchema(actionSchema)
         performance.value("prompt_tokens", engine.countTokens(basePrompt + history + latest))
         performance.mark("context_ready_ms")
@@ -107,12 +116,27 @@ class AssistantRuntime(context: Context, private val store: LocalStore,
 
     internal suspend fun generateToolFollowUp(original: String,toolName: String,result: String,onText: (String)->Unit): String {
         var instruction=""
+        if (toolName == "local_find") {
+            val query = discoveryQuery
+            discoveryQuery = null
+            if (query != null && org.json.JSONObject(result).optString("status") == "success") {
+                // Recompute from app-owned capabilities, never from names supplied in tool-result text.
+                val menu = toolsSelection(loadedWeb == true, query, "", loadedHasFiles)
+                val discovered = if (query.isBlank()) menu.available.map { it.name }.toSet() else menu.names
+                selectedToolNames = (selectedToolNames + discovered).intersect(availableToolNames)
+                if (ResponsePolicy.workFocused(original)) selectedToolNames = selectedToolNames.intersect(ResponsePolicy.workTools(original))
+                if (continuingPlanId != null) selectedToolNames = selectedToolNames - "draft_work_step"
+                actionSchema = ToolCatalog.schema(scheduled = loadedChat == 0L, onlyNames = selectedToolNames)
+                engine.setToolSchema(actionSchema)
+            }
+        }
         if(toolName in setOf("draft_work_step","append_work_step")) {
             val outcome=org.json.JSONObject(result)
             if(outcome.optString("status")=="success") {
                 val data=outcome.getJSONObject("data")
                 continuingPlanId=data.getString("work_id")
-                actionSchema=ToolCatalog.schema(onlyNames=ResponsePolicy.workTools(original)-"draft_work_step"+"append_work_step")
+                selectedToolNames = (selectedToolNames - "draft_work_step" + "append_work_step").intersect(availableToolNames)
+                actionSchema=ToolCatalog.schema(scheduled = loadedChat == 0L, onlyNames=selectedToolNames)
                 engine.setToolSchema(actionSchema)
                 instruction="\nThis request already has one plan: $continuingPlanId, revision ${data.getInt("revision")}. Use append_work_step for any remaining requested steps in that same plan. Do not start another plan. If all requested steps are drafted, stop and explain that the user must review them in Actions."
             }
@@ -177,6 +201,7 @@ class AssistantRuntime(context: Context, private val store: LocalStore,
             if (!ReminderTime.isUserProvided(time, "$original\n$recentUserRequests"))
                 throw ToolDetailsRequiredException("What date and time should I use? Please include the time in your request.")
         }
+        discoveryQuery = request?.takeIf { it.name == "local_find" }?.arguments?.getString("query")
         return request
     }
 

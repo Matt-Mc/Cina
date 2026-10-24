@@ -16,6 +16,15 @@ import java.time.Instant
 class AssistantTools(private val context: Context, private val store: LocalStore, private val secrets: SecretStore? = null,
                      private val mcp: McpConnections? = null, private val scheduledModelPath: String? = null,
                      private val webSearch: (String) -> String = DuckDuckGoSearch::search) {
+    internal fun menu(webEnabled: Boolean, request: String, recent: String, hasFiles: Boolean): ToolMenu {
+        val memory = context.getSharedPreferences("settings", 0).getBoolean("memory", true)
+        val connected = mcp?.snapshot()?.any { it.connected } == true
+        val scheduled = scheduledModelPath != null
+        return ToolMenu(
+            ToolCatalog.select(request, recent, hasFiles, webEnabled, memory, connected, scheduled),
+            ToolCatalog.select(request, recent, hasFiles, webEnabled, memory, connected, scheduled, all = true)
+        )
+    }
     fun specification(webEnabled: Boolean, request: String = "", recent: String = "", hasFiles: Boolean = false, all: Boolean = false): String =
         ToolCatalog.render(ToolCatalog.select(request, recent, hasFiles, webEnabled,
             context.getSharedPreferences("settings", 0).getBoolean("memory", true),
@@ -87,7 +96,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
             }
             DurableWorkScheduler.recover(context)
             return@withContext JSONObject().put("status","pending_approval").put("work_id",task.id)
-                .put("message","Scheduled suggestion saved in Tasks → Actions. Review the task there; this scheduled run has not executed the action.").toString()
+                .put("message","Scheduled suggestion saved in Work → Actions. Review the task there; this scheduled run has not executed the action.").toString()
         }
         val prepared = normalize(request)
         val definition = ToolCatalog.get(prepared.name) ?: error("Unknown tool.")
@@ -128,14 +137,14 @@ class AssistantTools(private val context: Context, private val store: LocalStore
                 "Skill saved: ${skill.title}. Review, edit, enable or remove it in Settings > Skills."
             }
             "search_memories" -> {
-                require(context.getSharedPreferences("settings", 0).getBoolean("memory", true)) { "Memory is off. Enable it in You > Memory." }
+                require(context.getSharedPreferences("settings", 0).getBoolean("memory", true)) { "Memory is off. Enable it in Library > Memory." }
                 val query = a.getString("query").trim()
                 require(query.length <= 200) { "Memory query is too long." }
                 store.memories().filter { it.fact.contains(query, true) }.take(20)
                     .joinToString("\n") { "#${it.id}: ${it.fact}${if(it.expiresMillis != null && it.expiresMillis <= System.currentTimeMillis()) " [expired historical detail; do not treat as upcoming]" else ""}" }.ifBlank { "No matching saved memories." }
             }
             "save_memory" -> {
-                require(context.getSharedPreferences("settings", 0).getBoolean("memory", true)) { "Memory is off. Enable it in You > Memory." }
+                require(context.getSharedPreferences("settings", 0).getBoolean("memory", true)) { "Memory is off. Enable it in Library > Memory." }
                 val fact = required("fact")
                 require(fact.length in 8..180) { "Memory must be 8 to 180 characters." }
                 require(!MemorySafety.isCredential(fact)) { "Passwords, tokens and payment credentials cannot be saved as memory." }

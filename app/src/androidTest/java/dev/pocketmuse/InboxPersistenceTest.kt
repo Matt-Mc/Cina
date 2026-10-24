@@ -83,7 +83,7 @@ class InboxPersistenceTest {
         store.writableDatabase.version = 7
         store.close()
         LocalStore(context).use { upgraded ->
-            assertEquals(11, upgraded.readableDatabase.version)
+            assertEquals(12, upgraded.readableDatabase.version)
             assertEquals("Existing conversation", upgraded.messages(chat).single().body)
             assertEquals("Keep this", upgraded.notes().single().body)
             assertEquals("Likes tea", upgraded.memories().single().fact)

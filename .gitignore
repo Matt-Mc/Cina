@@ -9,3 +9,13 @@ local.properties
 *.aab
 .tools/
 **/.cxx/
+companion/.env
+companion/compose.override.yaml
+companion/__pycache__/
+companion/.cina-install-mode
+companion/.cina-install.lock/
+companion/.env.install.*
+companion/.mode.install.*
+companion/.cina-bootstrap.lock/
+companion/.cina-download.*
+companion/.cina-source

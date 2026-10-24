@@ -1,0 +1,84 @@
+name: Companion checks
+on:
+  pull_request:
+    paths: ['companion/**', '.github/workflows/companion-tests.yml']
+  push:
+    branches: [main, 'codex/companion-*']
+    paths: ['companion/**', '.github/workflows/companion-tests.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  companion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Test protocol and recovery
+        run: python -m unittest discover -s companion -v
+      - name: Validate CPU and NVIDIA configurations
+        working-directory: companion
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.gpu.yaml config --quiet
+          model_image=$(docker compose config --format json | python -c 'import json,sys; print(json.load(sys.stdin)["services"]["model"]["image"])')
+          docker manifest inspect "$model_image" > /dev/null
+      - name: Deploy from only a downloaded Compose file
+        run: |
+          deploy_dir="$RUNNER_TEMP/cina-compose-smoke"
+          mkdir -p "$deploy_dir"
+          echo "CINA_DEPLOY_DIR=$deploy_dir" >> "$GITHUB_ENV"
+          cd "$deploy_dir"
+          curl -fL --proto '=https' "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/companion/compose.yaml" -o compose.yaml
+          printf 'CINA_BIND_IP=127.0.0.1\n' > .env
+          test "$(find . -type f | wc -l)" -eq 2
+          docker compose up -d --build --wait --wait-timeout 180
+          expected=$(sha256sum "$GITHUB_WORKSPACE/companion/cina.py" | cut -d ' ' -f 1)
+          actual=$(docker compose exec -T companion python -c 'import hashlib; print(hashlib.sha256(open("cina.py","rb").read()).hexdigest())')
+          test "$expected" = "$actual"
+      - name: Check container TLS, pairing and controls
+        working-directory: ${{ env.CINA_DEPLOY_DIR }}
+        run: docker compose exec -T companion python - < "$GITHUB_WORKSPACE/companion/container_smoke.py"
+      - name: Remove, redeploy with saved data, then delete volumes
+        working-directory: ${{ env.CINA_DEPLOY_DIR }}
+        run: |
+          image=$(docker compose images -q companion)
+          before=$(docker compose exec -T companion python -c 'from cina import Store; s=Store("/data"); s.set("compose_smoke", "retained"); print(s.setting("id"))')
+          docker volume create cina-unrelated-smoke
+          docker network create cina-unrelated-smoke
+          docker run -d --name cina-unrelated-smoke --network cina-unrelated-smoke --mount type=volume,src=cina-unrelated-smoke,dst=/unrelated --entrypoint python "$image" -c 'import time; time.sleep(3600)'
+          docker run --rm --user 0 --mount type=volume,src=cina-companion_cina-models,dst=/models --entrypoint python "$image" -c 'from pathlib import Path; Path("/models/compose-smoke").write_text("retained")'
+          docker compose down
+          test -z "$(docker ps -aq --filter label=com.docker.compose.project=cina-companion)"
+          test -z "$(docker network ls -q --filter label=com.docker.compose.project=cina-companion)"
+          docker volume inspect cina-companion_cina-data cina-companion_cina-models > /dev/null
+          docker compose up -d --build --wait --wait-timeout 180
+          after=$(docker compose exec -T companion python -c 'from cina import Store; s=Store("/data"); assert s.setting("compose_smoke")=="retained"; print(s.setting("id"))')
+          test "$before" = "$after"
+          docker run --rm --mount type=volume,src=cina-companion_cina-models,dst=/models,readonly --entrypoint python "$image" -c 'from pathlib import Path; assert Path("/models/compose-smoke").read_text()=="retained"'
+          docker compose exec -T companion python - < "$GITHUB_WORKSPACE/companion/container_smoke.py"
+          docker compose down --volumes
+          test -z "$(docker ps -aq --filter label=com.docker.compose.project=cina-companion)"
+          test -z "$(docker network ls -q --filter label=com.docker.compose.project=cina-companion)"
+          test -z "$(docker volume ls -q --filter label=com.docker.compose.project=cina-companion)"
+          # Explicit inspect must fail: do not rely only on project labels.
+          if docker volume inspect cina-companion_cina-data > /dev/null 2>&1; then exit 1; fi
+          if docker volume inspect cina-companion_cina-models > /dev/null 2>&1; then exit 1; fi
+          test "$(docker inspect -f '{{.State.Running}}' cina-unrelated-smoke)" = true
+          docker network inspect cina-unrelated-smoke > /dev/null
+          docker volume inspect cina-unrelated-smoke > /dev/null
+      - name: Container logs
+        if: failure() && env.CINA_DEPLOY_DIR != ''
+        working-directory: ${{ env.CINA_DEPLOY_DIR }}
+        run: docker compose logs --tail 100 companion model
+      - name: Stop test deployment
+        if: always() && env.CINA_DEPLOY_DIR != ''
+        working-directory: ${{ env.CINA_DEPLOY_DIR }}
+        run: |
+          docker compose down --volumes
+          docker rm -f cina-unrelated-smoke || true
+          docker network rm cina-unrelated-smoke || true
+          docker volume rm cina-unrelated-smoke || true

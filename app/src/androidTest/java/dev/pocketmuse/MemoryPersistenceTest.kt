@@ -25,7 +25,8 @@ class MemoryPersistenceTest {
             assertEquals("User prefers tea", store.activeMemories().single().fact)
             assertEquals("durable", store.memories().single().kind)
             assertNull(store.memories().single().expiresMillis)
-            assertEquals(11, store.readableDatabase.version)
+            assertEquals(12, store.readableDatabase.version)
+            assertTrue(HomeRepository.jobs(store).isEmpty())
             assertEquals("Preserve all of this", store.notes().single().body)
             assertEquals(1L, store.notes().single().version)
         }

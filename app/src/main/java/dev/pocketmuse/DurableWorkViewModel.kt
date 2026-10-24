@@ -28,7 +28,7 @@ internal class DurableWorkViewModel(application: Application): AndroidViewModel(
         }
     }
     fun save(action: WorkAction,existing: DurableTask?=null,proposal: IntakeProposal?=null)=change {
-        repository { it.save(action,existing,proposal) };_message.value="Task saved. Review it in Tasks → Actions; nothing runs until approved."
+        repository { it.save(action,existing,proposal) };_message.value="Task saved. Review it in Work → Actions; nothing runs until approved."
     }
     fun savePlan(actions: List<WorkAction>,runAt: Long?,existing: DurableTask?=null,proposal: IntakeProposal?=null)=change {
         repository { it.savePlan(actions,runAt,existing,proposal) };_message.value="Plan saved. Review every remaining step and its start time before approving."

@@ -1,6 +1,7 @@
 package dev.pocketmuse
 
 import androidx.compose.ui.test.*
+import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.test.platform.app.InstrumentationRegistry
@@ -33,6 +34,7 @@ class ContextLibraryFlowTest {
     }
     @Test fun createProjectPromoteCorrectAndRetrieveWithSourceLink() {
         compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Library").performClick()
         compose.onNodeWithText("Inbox").performClick()
         compose.onNodeWithText("Knowledge & projects").performClick()
         compose.onNodeWithText("Storage & backup").performClick()
@@ -57,13 +59,35 @@ class ContextLibraryFlowTest {
         compose.onNodeWithText("Save revision").performClick()
         compose.waitUntil(10_000) { LocalStore(base).use { ContextRepository(it).knowledge(id).singleOrNull()?.revision==2 } }
         compose.onNodeWithText("Find").performClick()
-        compose.onNodeWithText("Search saved context").performTextInput("green")
+        compose.onNodeWithText("Search saved context").performTextReplacement("green")
         compose.onNodeWithContentDescription("Search current knowledge only").performClick()
         compose.onNodeWithText("Find matches").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("The Cedar reference color is green.").fetchSemanticsNodes().isNotEmpty() }
+        lateinit var contextModel: ContextViewModel
+        compose.runOnIdle { contextModel = ViewModelProvider(compose.activity)[ContextViewModel::class.java] }
+        compose.waitUntil(10_000) { contextModel.hits.value.any { it.body == "The Cedar reference color is green." } }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("The Cedar reference color is green."))
         compose.onNodeWithText("The Cedar reference color is green.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Open source").performScrollTo().assertIsDisplayed()
         compose.onRoot().captureToImage().asAndroidBitmap().let { bitmap -> File(base.getExternalFilesDir(null),"context-search.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
+        compose.onNodeWithText("Open source").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Cedar test $id",substring=true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Captured content").performScrollTo().assertIsDisplayed()
+        // A source link from the new Library entry must also work when Inbox's nested library was open.
+        compose.onNodeWithText("Knowledge & projects").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("Knowledge & projects").performClick()
+        compose.onNodeWithText("Back to Library").assertIsDisplayed()
+        // This destination restores its prior search draft when the navigation state is retained.
+        compose.onNodeWithText("Search saved context").performTextReplacement("green")
+        compose.onNodeWithText("Find matches").performScrollTo().performClick()
+        try {
+            compose.waitUntil(10_000) { contextModel.hits.value.any { it.body == "The Cedar reference color is green." } }
+        } catch(error: Exception) {
+            throw AssertionError("Search state: ${contextModel.message.value}; hits=${contextModel.hits.value.map { it.body }}; UI=${compose.onRoot().printToString()}", error)
+        }
+        // The keyboard can leave results outside LazyColumn's composed viewport.
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Open source"))
         compose.onNodeWithText("Open source").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("Cedar test $id",substring=true).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Captured content").performScrollTo().assertIsDisplayed()

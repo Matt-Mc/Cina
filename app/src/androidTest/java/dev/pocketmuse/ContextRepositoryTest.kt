@@ -37,7 +37,7 @@ class ContextRepositoryTest {
         removeContextSchemaForMigrationTest(store.writableDatabase)
         store.writableDatabase.version=8;store.close()
         LocalStore(context).use { upgraded ->
-            assertEquals(11,upgraded.readableDatabase.version)
+            assertEquals(12,upgraded.readableDatabase.version)
             assertEquals("accepted",InboxRepository(upgraded).review("old")!!.proposals.single().state)
             assertTrue(ContextRepository(upgraded).search("Maple").any { it.sourceId=="old" })
             assertTrue(ContextRepository(upgraded).search("Ottawa").any { it.kind=="caption" })
@@ -74,7 +74,7 @@ class ContextRepositoryTest {
             assertEquals(listOf("The key is green.","The key is blue."),repo.history(id).map { it.text })
             assertEquals("The key is green.",repo.search("green",onlyKnowledge=true).single().body)
         }
-        assertEquals(11,store.readableDatabase.version)
+        assertEquals(12,store.readableDatabase.version)
     }
     @Test fun expiryArchiveAndConflictsAreExcludedFromCurrentRetrieval() = fixture { _,_,inbox,context ->
         source(inbox,"one","I am staying in Ottawa.")
