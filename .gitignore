@@ -10,6 +10,7 @@ local.properties
 .tools/
 **/.cxx/
 companion/.env
+companion/compose.override.yaml
 companion/__pycache__/
 companion/.cina-install-mode
 companion/.cina-install.lock/

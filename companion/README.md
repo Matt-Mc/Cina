@@ -6,102 +6,73 @@ This first implementation supports text analysis, model downloads, load/unload/d
 
 This is a preview server component. Pairing requires a companion-aware Cina Android build that includes **Home** under Connections; older mobile releases do not have that integration. Publishing this component does not publish or update the mobile app.
 
-## Deploy
+## Deploy with Docker Compose
 
-Use a Linux Docker host with Docker Compose. NVIDIA acceleration also needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Ollama also documents [Docker on Windows with WSL2](https://docs.ollama.com/docker); that configuration has not been tested here. No access to your existing home server was available during implementation.
+Use a Linux server with Docker Engine, Compose v2 and its Buildx plugin installed. NVIDIA acceleration also needs the NVIDIA driver and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). See [Docker's installation instructions](https://docs.docker.com/engine/install/) for your distribution. Cina uses standard Docker commands for installation, updates and removal.
 
-### Install directly from GitHub
-
-Once these companion files are merged into `main`, the normal remote install command is:
+### 1. Download the Compose file
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Matt-Mc/Cina/main/companion/bootstrap.sh | bash
+mkdir -p ~/cina-home
+cd ~/cina-home
+curl -fL https://raw.githubusercontent.com/Matt-Mc/Cina/codex/companion-bootstrap/companion/compose.yaml -o compose.yaml
 ```
 
-For the published preview branch, use the same branch for the bootstrap URL and downloaded bundle:
+This is the published preview branch; the companion is not on `main` yet. Only `compose.yaml` is required for CPU deployment. Docker downloads a pinned revision of the server source from GitHub and builds it automatically, so no local source checkout, Git, Python or installer script is needed. The first build and model-runner image download can take several minutes.
+
+### 2. Set your server address
+
+Create a `.env` file beside `compose.yaml`, replacing the example with the server's LAN/VPN address reachable from your phone:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Matt-Mc/Cina/codex/companion-bootstrap/companion/bootstrap.sh | bash -s -- --ref codex/companion-bootstrap
+printf 'CINA_BIND_IP=192.168.1.20\n' > .env
 ```
 
-No Git checkout, ZIP extraction or host Python is needed. The bootstrap resolves the requested GitHub branch/tag to one immutable commit, downloads the companion files over HTTPS, and installs them under `~/.local/share/cina-home`. It reconnects prompts to `/dev/tty`, so address selection and pairing setup work even though the script arrived through a pipe. All downloads finish before existing local code is replaced; `.env`, accelerator settings and Docker volumes are retained. Repeating the command updates the code and generates fresh pairing details without unpairing existing phones. The selected repository and commit are recorded in `.cina-source`.
+For an existing installation, edit its `.env` instead of replacing it. The default address is `127.0.0.1`, which accepts connections only from the server itself. Optional settings are `CINA_PORT` (default `8443`), `CINA_NAME` (default `Home`) and `CINA_CONTEXT` (default `4096`). Allow the HTTPS port from your phone's LAN/VPN; keep it on your private network.
 
-On a fresh Ubuntu/Debian host without Docker/Compose, interactive setup offers to install them from Docker's official package repository. `--install-docker` explicitly permits that step for headless setup; `--yes` alone does not permit system package installation. Supported host provisioning targets are Ubuntu 22.04/24.04/26.04/26.10 and Debian 12/13 with systemd. Other distributions and WSL must provide Docker/Compose themselves. Existing conflicting packages are not removed, existing Docker daemon configuration is not rewritten, and group membership is not changed. A newly installed rootful engine may run the Cina setup through sudo.
-
-For example, after publication to `main`, a fresh host with configured NVIDIA drivers/toolkit can use:
+For your **RTX 3070**, also download the NVIDIA override before starting:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Matt-Mc/Cina/main/companion/bootstrap.sh | bash -s -- --install-docker --gpu
+curl -fL https://raw.githubusercontent.com/Matt-Mc/Cina/codex/companion-bootstrap/companion/compose.gpu.yaml -o compose.override.yaml
 ```
 
-For unattended CPU setup (run as root or with appropriate sudo access):
+Compose automatically includes `compose.override.yaml` for every command in this directory, keeping GPU selection consistent during updates and removal. Omit it for CPU operation. Docker must already have GPU access; a missing driver/toolkit produces a startup error.
+
+### 3. Start and pair
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Matt-Mc/Cina/main/companion/bootstrap.sh | bash -s -- --install-docker --cpu --host 192.168.1.20 --yes
-```
-
-Use `--dir /srv/cina-home` to choose another permanent directory, or `--ref TAG_OR_FULL_COMMIT_SHA` to select a specific revision. For forks, `--repo OWNER/REPO` changes the download source. GPU drivers and NVIDIA Container Toolkit remain host prerequisites; the bootstrap does not install kernel drivers or reconfigure an existing Docker runtime. Initial model downloads remain in the Cina app. For a fresh pairing code without updating code, run the saved installer, for example `bash ~/.local/share/cina-home/install.sh`.
-
-### Terminal installer
-
-Extract the complete companion package into a directory you own, then run from that directory:
-
-```sh
-bash install.sh
-```
-
-From a source checkout, `bash companion/install.sh` works from the repository root. Keep the other companion files beside the script; downloading `install.sh` alone is insufficient. The installer checks Docker and Compose, suggests a private LAN/VPN IPv4 address, detects configured NVIDIA support, writes the connection settings, builds/starts both services, waits for the encrypted API and model runner, and prints a one-use pairing code for the phone. No model weights are downloaded automatically; choose a model from Cina after pairing.
-
-For the RTX 3070, require GPU operation explicitly:
-
-```sh
-bash install.sh --gpu
-```
-
-For unattended setup or a specific network address:
-
-```sh
-bash install.sh --host 192.168.1.20 --gpu --yes
-# Or choose CPU operation explicitly:
-bash install.sh --host 192.168.1.20 --cpu --yes
-```
-
-Optional `--port 9443` changes the HTTPS port; `--timeout 300` allows longer startup. `--help` lists all options. Use the LAN/VPN address assigned to this server and reachable by your phone. The script runs against a local Docker engine and rejects remote Docker contexts. Docker publishes Cina's HTTPS port at the chosen address; the installer does not separately configure your firewall or install Docker/drivers/toolkit, change Docker permissions, or restart the daemon. Missing prerequisites produce links to their official setup instructions. If your local Docker socket requires root, run `sudo bash install.sh` after reviewing the script.
-
-Rerun the installer to apply the current bundle or generate a fresh pairing code. It preserves other `.env` settings, records CPU/GPU choice in `.cina-install-mode`, and keeps the named volumes containing identity, paired devices, models and jobs. Once CPU/GPU mode is recorded, it stays selected on reruns unless `--cpu` or `--gpu` overrides it. GPU failures stop setup with instructions; they do not silently switch to CPU. An interrupted or failed startup leaves the services and data available for diagnosis. Keep the installed directory for subsequent updates.
-
-### Manual setup
-
-From this directory:
-
-```sh
-cp .env.example .env
-```
-
-Edit `CINA_BIND_IP` to the server's LAN or VPN address, for example `192.168.1.20`. The default `127.0.0.1` accepts only connections from the server itself. Allow the configured HTTPS port (default 8443) from your phone's LAN/VPN. Keep the service on your private network; do not forward it directly from the internet.
-
-For the Ryzen 5600X / RTX 3070 target:
-
-```sh
-docker compose -f compose.yaml -f compose.gpu.yaml config
-docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
-```
-
-For CPU-only deployment, omit both `-f` arguments:
-
-```sh
-docker compose up -d --build
-```
-
-Two services run: a small Cina control service and a private Ollama model runner. Only Cina's HTTPS port is published. Persistent named volumes keep the server identity, certificate, paired devices, job journal and model files. The control service runs as an unprivileged user with a read-only image, dropped capabilities and no Docker socket or host-directory mounts. Ollama's cloud features are disabled with `OLLAMA_NO_CLOUD=1`; model downloads still require internet access.
-
-Generate pairing details on the host (replace the address with your server's actual address):
-
-```sh
+docker compose up -d --build --wait --wait-timeout 180
 docker compose exec companion python cina.py pair --url https://192.168.1.20:8443
 ```
 
-Copy the complete JSON object into Cina's **Pairing details** field. It contains a certificate fingerprint and a one-use code valid for ten minutes. Only copy details generated on your own server. The phone checks the fingerprint before sending the code; a different certificate is rejected. Tokens are encrypted using Android Keystore on the phone, and only token hashes are stored by the server. An expired code can be replaced by running the same command again. If pairing succeeds on the server but the response is lost, generate a new code and revoke the unused device later.
+Use the address and port from `.env` in the pairing command. `--wait` checks both the encrypted API and private model runner. If startup fails, inspect `docker compose logs --tail 100` and rerun after resolving the error.
+
+Copy the complete JSON object into Cina under **Settings → Connections → + Add → Add your Home server → Pairing details**. It contains a certificate fingerprint and a one-use code valid for ten minutes. Generate a fresh code with the same command whenever needed. Only copy details generated on your own server. The phone checks the fingerprint before sending the code; credentials are encrypted using Android Keystore and the server stores only token hashes. An acknowledged pairing cannot be reused; if the response is lost, generate a new code and revoke the unused device later.
+
+No model weights are downloaded automatically. Once paired, choose a model in Cina's existing Models screen.
+
+Two services run: a small Cina control service and a private Ollama model runner. Only Cina's HTTPS port is published. Named volumes preserve server identity, certificate, paired devices, jobs and model files. The control service runs as an unprivileged user with a read-only image, dropped capabilities and no Docker socket or host-directory mounts. Ollama's cloud features are disabled with `OLLAMA_NO_CLOUD=1`; model downloads still need internet access.
+
+### Stop or uninstall
+
+Run these commands from the directory containing your Compose file:
+
+```sh
+# Stop and remove the containers/network; keep models, pairing and work.
+docker compose down
+# Start again with the same data.
+docker compose up -d --build --wait --wait-timeout 180
+```
+
+To permanently delete **all companion models, server work history, identity and paired-device credentials** as well:
+
+```sh
+docker compose down --volumes
+```
+
+This leaves Docker, GPU drivers, downloaded images and the small setup files in place. It does not remove results already saved on your phone. After deleting the volumes, use **Forget on this phone** for the old Home connection; a new deployment needs pairing again.
+
+Earlier script-based deployments use the same `cina-companion` project and named volumes. Copy their existing `.env` into this directory and, if they used NVIDIA, download the override above. Compose adopts their containers/data without rerunning the scripts. Keep the project name unchanged when moving directories. If you still use the original source bundle with explicit `-f compose.yaml -f compose.gpu.yaml` arguments, continue supplying both arguments or save the GPU override as `compose.override.yaml`.
 
 ## Use it from Cina
 
@@ -138,7 +109,17 @@ Disconnect in the app revokes that pairing after server acknowledgement. Accepte
 
 Back up both named volumes while the stack is stopped. The data volume contains sensitive prompts/results, certificate private key and device hashes; protect it like your other personal data. Restoring it preserves server identity and job IDs. Do not use `docker compose down --volumes` unless intentionally deleting all server data and models. A new data volume creates a new identity and requires pairing again. There is no retention/purge UI in v1.
 
-The Python base and Ollama runner are pinned to Docker Hub manifest digests verified on October 22, 2026. Update the Dockerfile base and `CINA_OLLAMA_IMAGE` deliberately when upgrading. Model tags can move, so record the digest shown in the runner inventory for benchmark evidence. Upgrade with the same Compose files used at deployment and `up -d --build`. No Cina image registry or automatic container updater is configured.
+### Update
+
+Download the newer `compose.yaml` into the same directory (and the newer GPU override if used), then run:
+
+```sh
+docker compose up -d --build --wait --wait-timeout 180
+```
+
+Keep `.env` and the named volumes to retain models, pairing and work. The Compose file pins the server source to an immutable GitHub commit and the model-runner image to a manifest digest. Updating the Compose file deliberately advances those pins; rebuilding an unchanged file uses the same server source. No Cina image registry or automatic updater is required. Model tags can move, so record the installed digest when benchmarking.
+
+For development from a source checkout, run `CINA_BUILD_CONTEXT=. docker compose up -d --build --wait` inside `companion/` to build your local server changes. The standard file otherwise always builds its pinned remote source, even when run from a checkout.
 
 ## Verify
 
@@ -147,8 +128,8 @@ python -m unittest discover -s companion -v
 # Run from repository root. No third-party Python packages or model weights needed.
 ```
 
-CI validates Compose, builds the control image and runs an HTTPS pairing/control smoke test against its real read-only container and named volume. `integration_fixture.py` is a loopback-only fake model runner for the optional Android `HomeCompanionFlowTest`; it is excluded from the image. That test uses a genuine pinned HTTPS connection, pairing UI, the existing model picker, durable result delivery and Work. It is not an inference benchmark.
+CI validates both Compose configurations, deploys from a directory containing only the downloaded Compose file and a one-line `.env`, and checks the real container's TLS, pairing and controls. It also exercises removal/redeployment with retained data and removal with `--volumes`, while checking that unrelated Docker resources survive. `integration_fixture.py` is a loopback-only fake model runner for the optional Android `HomeCompanionFlowTest`; it is excluded from the image. That test uses a genuine pinned HTTPS connection, pairing UI, the existing model picker, durable result delivery and Work. It is not an inference benchmark.
 
-Docker and a GPU are unavailable in the implementation workspace. Container build/GPU execution must therefore be confirmed on a Docker host; the added CI checks run when pushed. The Python service and Android integration can be verified locally without them. Real 3070 memory, speed and model quality remain unmeasured. See [the model evaluation evidence and product design](../docs/companion-and-consolidation-2026-10-21.md) and [the phone benchmark runner](../tools/Measure-CinaModels.ps1).
+Docker and a GPU are unavailable in the implementation workspace. Linux CI validates container builds and CPU deployment; actual GPU execution requires target hardware. The Python service and Android integration can also be verified locally without Docker. Real 3070 memory, speed and model quality remain unmeasured. See [the model evaluation evidence and product design](../docs/companion-and-consolidation-2026-10-21.md) and [the phone benchmark runner](../tools/Measure-CinaModels.ps1).
 
 To reproduce the opt-in phone restart check, use a disposable Android emulator and the built debug/test APKs. Start `integration_fixture.py` with a disposable `CINA_DATA` directory and OpenSSL on PATH, then forward emulator port 18443 with `adb reverse tcp:18443 tcp:18443`. Pass the base64-encoded `bundle.json` as the instrumentation argument `cinaHomeBundle` to `HomeCompanionFlowTest` for the UI check. `HomeCompanionRestartTest` accepts `cinaHomeRestart=prepare` with a fresh pairing bundle; it persists a queued job while the worker is paused. Force-stop the app, unpause the fixture's worker on the host, wait for its SQLite job to finish, then run `cinaHomeRestart=verify` in a new app process. Verification checks the same server/job identity and exactly one delivered chat answer. These tests skip ordinary runs without explicit fixture arguments.
