@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl \
     && useradd --uid 10001 --create-home cina \
     && mkdir /data && chown cina:cina /data
 WORKDIR /app
-COPY cina.py /app/cina.py
+COPY --chmod=0444 cina.py /app/cina.py
 USER 10001:10001
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CINA_DATA=/data
 EXPOSE 8443

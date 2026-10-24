@@ -51,7 +51,11 @@ jobs:
       - name: Container logs
         if: failure()
         working-directory: companion
-        run: docker compose logs companion model
+        run: |
+          for log_file in "$RUNNER_TEMP/cina-install.log" "$RUNNER_TEMP/cina-install-rerun.log"; do
+            if test -f "$log_file"; then sed '/"code":/d' "$log_file" | tail -n 100; fi
+          done
+          docker compose logs companion model
       - name: Stop test deployment
         if: always()
         working-directory: companion
