@@ -1,0 +1,58 @@
+name: Companion checks
+on:
+  pull_request:
+    paths: ['companion/**', '.github/workflows/companion-tests.yml']
+  push:
+    branches: [main, 'codex/companion-*']
+    paths: ['companion/**', '.github/workflows/companion-tests.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  companion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Test protocol and recovery
+        run: |
+          bash -n companion/install.sh
+          bash -n companion/bootstrap.sh
+          bash -n companion/setup-docker.sh
+          python -m unittest discover -s companion -v
+      - name: Validate deployment configurations
+        working-directory: companion
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.gpu.yaml config --quiet
+          model_image=$(docker compose config --format json | python -c 'import json,sys; print(json.load(sys.stdin)["services"]["model"]["image"])')
+          docker manifest inspect "$model_image" > /dev/null
+      - name: Install through GitHub bootstrap and rerun CPU deployment
+        working-directory: companion
+        run: |
+          host_address=$(ip -o -4 addr show scope global | awk '$2 !~ /^(docker|br-|veth)/ {split($4,a,"/"); print a[1]; exit}')
+          test -n "$host_address"
+          curl -fsSL --proto '=https' "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_SHA/companion/bootstrap.sh" | bash -s -- --dir "$PWD" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_SHA" --cpu --host "$host_address" --yes > "$RUNNER_TEMP/cina-install.log" 2>&1
+          before=$(docker compose exec -T companion python -c 'from cina import Store; print(Store("/data").setting("id"))')
+          bash install.sh --cpu --host "$host_address" --yes > "$RUNNER_TEMP/cina-install-rerun.log" 2>&1
+          after=$(docker compose exec -T companion python -c 'from cina import Store; print(Store("/data").setting("id"))')
+          test "$before" = "$after"
+      - name: Check container TLS, pairing and controls
+        working-directory: companion
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker compose exec -T companion python -c "import socket; socket.create_connection(('127.0.0.1',8443),1).close()"; then break; fi
+            sleep 1
+          done
+          docker compose exec -T companion python - < container_smoke.py
+      - name: Container logs
+        if: failure()
+        working-directory: companion
+        run: docker compose logs companion model
+      - name: Stop test deployment
+        if: always()
+        working-directory: companion
+        run: docker compose down --volumes
