@@ -20,7 +20,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-internal fun ContextLibraryScreen(vm: ContextViewModel,onBack: () -> Unit,onOpenSource: (String) -> Unit) {
+internal fun ContextLibraryScreen(vm: ContextViewModel,onBack: () -> Unit,onOpenSource: (String) -> Unit, backLabel: String = "Back to Inbox") {
     var storage by rememberSaveable { mutableStateOf(false) }
     if(storage) { LibraryStorageScreen(onBack={ storage=false;vm.refresh();vm.clearResults() });return }
     val projects by vm.projects.collectAsState()
@@ -48,7 +48,7 @@ internal fun ContextLibraryScreen(vm: ContextViewModel,onBack: () -> Unit,onOpen
     }
     BackHandler { onBack() }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal=22.dp),verticalArrangement=Arrangement.spacedBy(16.dp),contentPadding=PaddingValues(vertical=20.dp)) {
-        item { TextButton(onClick=onBack) { Text("Back to Inbox") }; Text("Knowledge & projects",style=MaterialTheme.typography.headlineMedium,color=Ink) }
+        item { TextButton(onClick=onBack) { Text(backLabel) }; Text("Knowledge & projects",style=MaterialTheme.typography.headlineMedium,color=Ink) }
         item { TextButton(onClick={ storage=true }) { Text("Storage & backup") } }
         item { ScreenTabs(listOf("Find","Knowledge","Projects"),tab) { tab=it } }
         if(message.isNotBlank()) item { Text(message,color=Muted) }

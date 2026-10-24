@@ -65,7 +65,7 @@ internal fun DurableWorkContent(onOpenResult: (String)->Unit,vm: DurableWorkView
             task.steps.forEach { step ->
                 if(step.state=="completed") Text("Step ${step.ordinal+1}: already completed; will not repeat.",color=Muted)
                 else {
-                    Text("Step ${step.ordinal+1}: ${if(step.action.kind=="note") "Create one note in Cina → Notes" else "Create one reminder in Cina → Tasks → Reminders"}")
+                    Text("Step ${step.ordinal+1}: ${if(step.action.kind=="note") "Create one note in Cina → Notes" else "Create one reminder in Cina → Work → Reminders"}")
                     Text("Title: ${step.action.title}")
                     if(step.action.kind=="note") Text(step.action.body)
                     else Text("When: ${DateFormat.getDateTimeInstance().format(Date(requireNotNull(step.action.whenMillis)))} (${java.util.TimeZone.getDefault().id})")

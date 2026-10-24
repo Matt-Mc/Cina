@@ -20,7 +20,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-internal fun InboxScreen(vm: InboxViewModel = viewModel()) {
+internal fun InboxScreen(vm: InboxViewModel = viewModel(), sourceId: String? = null, onSourceOpened: () -> Unit = {}) {
     val contextVm: ContextViewModel = viewModel()
     val workVm: DurableWorkViewModel = viewModel()
     val workMessage by workVm.message.collectAsState()
@@ -32,6 +32,9 @@ internal fun InboxScreen(vm: InboxViewModel = viewModel()) {
     val contextMessage by contextVm.message.collectAsState()
     val contextBusy by contextVm.busy.collectAsState()
     var library by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(sourceId) {
+        sourceId?.let { library = false; vm.openSource(it); onSourceOpened() }
+    }
     var promote by remember { mutableStateOf<IntakeProposal?>(null) }
     val entries by vm.items.collectAsState()
     val detail by vm.detail.collectAsState()
@@ -49,7 +52,7 @@ internal fun InboxScreen(vm: InboxViewModel = viewModel()) {
     }
     LaunchedEffect(library,detail?.item?.id,review?.revision) { if(!library) contextVm.refresh(detail?.item?.id) }
     if(library) {
-        ContextLibraryScreen(contextVm,{ vm.closeDetail();vm.refresh();library=false }) { id -> vm.refresh();vm.openSource(id);library=false }
+        ContextLibraryScreen(contextVm, { vm.closeDetail();vm.refresh();library=false }, onOpenSource = { id -> vm.refresh();vm.openSource(id);library=false })
         return
     }
     promote?.let { proposal -> KnowledgePromotionDialog(proposal,{ promote=null }) { expires -> contextVm.promote(proposal,expires);promote=null } }

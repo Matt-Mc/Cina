@@ -32,7 +32,7 @@ class NativeToolCycleTest {
                     "Fixture Games - https://example.com/ottawa-riftbound - Ottawa shop; Riftbound listed in stock.\n" +
                         "Fixture Cards - https://example.com/cards - Ottawa shop; call to confirm Riftbound stock."
                 })
-                val runtime = AssistantRuntime(context, store) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+                val runtime = AssistantRuntime(context, store) { web, request, recent, files -> tools.menu(web, request, recent, files) }
                 val model = LocalModel(0, modelFile.name, modelFile.absolutePath, "test", modelFile.length())
                 // Long JNI prompt processing must allow ART to suspend for garbage collection.
                 val collections = AtomicInteger()
@@ -80,7 +80,7 @@ class NativeToolCycleTest {
                             assertTrue(result, tools.succeeded(result))
                             results.add(result)
                             evidence.appendText("Executed: ${call.name}\nResult: $result\n")
-                            answer = runtime.generate(AssistantPrompt.toolFollowUp(original, call.name, result)) {}
+                            answer = runtime.generateToolFollowUp(original, call.name, result) {}
                             evidence.appendText("Continuation: $answer\n")
                         }
                         assertTrue("No $expectedTool execution. Model said: $answer", calls.any { it.startsWith("$expectedTool:") })

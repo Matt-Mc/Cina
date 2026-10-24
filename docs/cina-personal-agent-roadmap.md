@@ -90,6 +90,10 @@ Historical verification is recorded in the audit and tool-reliability documents.
 
 ## 4. Architecture and ownership
 
+October 21 update: [Home companion, model evaluation and consolidation](companion-and-consolidation-2026-10-21.md) records the user-requested Docker direction, Ryzen 5600X/RTX 3070 baseline, staged inference/job/browser capabilities, model-size experiment and four-destination navigation. It extends these ownership and permission contracts; the inference starter is not a completed paired-computer implementation.
+
+October 22 clarification: the same design now specifies an **app-managed companion**, with phone/server models in the existing picker/Models view, durable jobs in the existing Work flow, and pairing through Connections. The user explicitly requires minimal UI: no separate companion section/dashboard or phone/server tabs. The first connected milestone must demonstrate real model management and a job that survives the phone app closing, while the phone remains independently useful offline. The updated delivery order permits this bounded server executor to bridge the shared Work contract before every legacy phone execution path is migrated; the original ownership, approval and recovery gates still apply.
+
 ```mermaid
 flowchart TD
     U[Chat, share sheet, files and widgets] --> I[Durable phone inbox]

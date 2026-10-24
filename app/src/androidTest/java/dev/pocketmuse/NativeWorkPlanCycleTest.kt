@@ -21,11 +21,14 @@ class NativeWorkPlanCycleTest {
         val model=File(base.getExternalFilesDir(null),name);require(model.isFile)
         val file=File(base.filesDir,"native-work-cycle-${System.nanoTime()}.db")
         val context=object:ContextWrapper(base) { override fun getDatabasePath(name:String)=file }
-        val evidence=File(base.getExternalFilesDir(null),"work-cycle-$name.txt")
+        val evaluationId=InstrumentationRegistry.getArguments().getString("evaluation_id")?.also {
+            require(it.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+        }
+        val evidence=File(base.getExternalFilesDir(null),"work-cycle-$name${evaluationId?.let { "-$it" }.orEmpty()}.txt")
         evidence.writeText("Production continuation test: $name\n")
         try { ModelAccess.mutex.withLock { LocalStore(context).use { store ->
             val tools=AssistantTools(context,store)
-            val runtime=AssistantRuntime(context,store) { web,request,recent,files -> tools.specification(web,request,recent,files) }
+            val runtime=AssistantRuntime(context,store) { web,request,recent,files -> tools.menu(web,request,recent,files) }
             val original="Draft one local action plan for my approval with two note steps. First note: exact title \"Packing\", exact body \"Bring coat\". Second note: exact title \"Tickets\", exact body \"Print tickets\". Do not execute the plan."
             try { withTimeout(240000) {
                 runtime.use(LocalModel(0,name,model.absolutePath,"test",model.length()),store.chat(store.newChat())!!,false,YouProfile(),original)
@@ -47,7 +50,7 @@ class NativeWorkPlanCycleTest {
                 assertEquals("waiting_for_approval",task.state);assertNull(task.approvedHash)
                 assertTrue(store.notes().isEmpty());assertTrue(store.reminders().isEmpty())
                 evidence.appendText("\nPASS: exactly two ordered draft steps, no execution.\n")
-            } } catch(e:Exception) { evidence.appendText("\nFAILED: ${e.message}\n");throw e }
+            } } catch(e:Throwable) { evidence.appendText("\nFAILED: ${e.message}\n");throw e }
             finally { runtime.release() }
         } } } finally { SQLiteDatabase.deleteDatabase(file) }
     }

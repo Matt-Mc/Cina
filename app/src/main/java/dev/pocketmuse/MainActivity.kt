@@ -15,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -134,7 +135,7 @@ class MainActivity : ComponentActivity() {
         }
         intent?.getStringExtra(EXTRA_WIDGET_PAGE)?.let { page ->
             if (page == "Inbox" && !BuildConfig.INBOX_ENABLED) return
-            if (page in setOf("Inbox", "Notes", "Scheduled tasks", "Reminders", "Chat", "Actions")) widgetPageRequest = ++widgetRequestId to page
+            if (page in setOf("Inbox", "Notes", "Scheduled tasks", "Reminders", "Chat", "Actions", "Work")) widgetPageRequest = ++widgetRequestId to page
         }
     }
 
@@ -166,6 +167,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
     var modelReturnPage by rememberSaveable { mutableStateOf("Settings") }
     var companionReturnPage by rememberSaveable { mutableStateOf("Settings") }
     var taskTab by rememberSaveable { mutableIntStateOf(4) }
+    var librarySource by rememberSaveable { mutableStateOf<String?>(null) }
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     val pageState = rememberSaveableStateHolder()
     val status by vm.status.collectAsState()
@@ -181,6 +183,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                 "Scheduled tasks" -> { page = "Tasks"; taskTab = 2 }
                 "Reminders" -> { page = "Tasks"; taskTab = 1 }
                 "Actions" -> { page = "Tasks"; taskTab = 3 }
+                "Work" -> { page = "Tasks"; taskTab = 4 }
                 else -> page = it.second
             }
         }
@@ -191,6 +194,8 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
             "Companion" -> companionReturnPage
             "Connections", "Skills", "Chat preferences", "About", "Response settings" -> "Settings"
             "Edit profile" -> "You"
+            "Inbox", "Notes", "Knowledge", "Memory", "Library storage" -> "Library"
+            "You" -> "Settings"
             else -> "Chat"
         }
     }
@@ -222,14 +227,18 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                             onMenu = { menuOpen = true }, onCompanion = { companionReturnPage = "Chat"; page = "Companion" },
                             widgetDraft = widgetDraft, widgetDraftKey = widgetDraftKey)
                         "Tasks" -> TasksScreen(vm, taskTab, { taskTab = it }, onOpenChat = { page = "Chat" }, onOpenResult = { kind -> vm.refresh();if(kind=="note") page="Notes" else taskTab=1 })
-                        "Inbox" -> if (BuildConfig.INBOX_ENABLED) InboxScreen()
+                        "Library" -> LibraryScreen(vm) { page = it }
+                        "Inbox" -> if (BuildConfig.INBOX_ENABLED) InboxScreen(sourceId = librarySource, onSourceOpened = { librarySource = null })
                         "Notes" -> NotesScreen(vm)
+                        "Knowledge" -> if (BuildConfig.INBOX_ENABLED) ContextLibraryScreen(viewModel(), onBack = { page = "Library" }, onOpenSource = { id -> librarySource = id; page = "Inbox" }, backLabel = "Back to Library")
+                        "Memory" -> Page("Memory", "The personal details you choose to keep.") { MemoryContent(vm, onOpenChat = { page = "Chat" }) }
+                        "Library storage" -> if (BuildConfig.INBOX_ENABLED) LibraryStorageScreen(onBack = { page = "Library" })
                         "You" -> YouScreen(vm, onEditProfile = { page = "Edit profile" }, onOpenChat = { page = "Chat" })
                         "Edit profile" -> ProfileEditor(profile, onSave = { vm.saveYouProfile(it); page = "You" })
                         "Models" -> ModelsScreen(vm)
                         "Skills" -> SkillsScreen(vm)
                         "Connections" -> ConnectionsScreen(vm)
-                        "Companion" -> Page("Companion", "Make Cina your own.") { CompanionSettings(profile, vm::saveCompanionSettings) }
+                        "Companion" -> Page("Appearance", "Make Cina your own.") { CompanionSettings(profile, vm::saveCompanionSettings) }
                         "Response settings" -> Page("Responses", "Choose speed, model, and level of detail.") { ResponseSettings(vm) }
                         "Chat preferences" -> ChatPreferencesScreen(vm)
                         "About" -> AboutScreen(updateStatus, onCheckUpdates)
@@ -252,17 +261,17 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                     Text("cina", fontFamily = FontFamily.Serif, fontSize = 38.sp, color = Ink)
                     Text("A little space to think.", color = Muted, fontSize = 13.sp)
                     Spacer(Modifier.height(32.dp))
-                    listOf("Inbox" to "Captured text, links & documents", "Chat" to "Conversations & files", "Tasks" to "Goals, reminders & schedules",
-                        "Notes" to "Things worth keeping", "You" to "Profile & memory", "Settings" to "Models, connections & appearance")
-                        .filter { it.first != "Inbox" || BuildConfig.INBOX_ENABLED }.forEach { (destination, detail) ->
-                        val selected = page == destination
+                    listOf("Chat" to "Conversations & files", "Library" to "Inbox, notes, knowledge & memory", "Work" to "Progress, approvals & results",
+                        "Settings" to "Profile, models, connections & appearance").forEach { (label, detail) ->
+                        val destination = if (label == "Work") "Tasks" else label
+                        val selected = page == destination || destination == "Library" && page in setOf("Inbox", "Notes", "Knowledge", "Memory", "Library storage")
                         Row(Modifier.fillMaxWidth().background(if (selected) Soft else Color.Transparent, RoundedCornerShape(16.dp))
                             .clickable { page = destination; menuOpen = false }.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text(destination, fontSize = 19.sp, color = if (selected) Accent else Ink, fontWeight = FontWeight.Medium)
+                                Text(label, fontSize = 19.sp, color = if (selected) Accent else Ink, fontWeight = FontWeight.Medium)
                                 Text(detail, color = Muted, fontSize = 11.sp)
                             }
-                            if (destination == "You" && suggestions.isNotEmpty()) Text("${suggestions.size}", color = Accent)
+                            if (destination == "Library" && suggestions.isNotEmpty()) Text("${suggestions.size}", color = Accent)
                         }
                         Spacer(Modifier.height(6.dp))
                     }
@@ -294,6 +303,9 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
     val chats by vm.chats.collectAsState(); val active by vm.active.collectAsState(); val messages by vm.messages.collectAsState()
     val live by vm.live.collectAsState(); val busy by vm.busy.collectAsState(); val logs by vm.logs.collectAsState()
     val selected by vm.selectedModel.collectAsState(); val models by vm.models.collectAsState()
+    val home by vm.homeState.collectAsState()
+    val homeJobs by vm.homeJobs.collectAsState()
+    HomeRefresh(vm)
     val attachments by vm.attachments.collectAsState(); val profile by vm.youProfile.collectAsState()
     val benchmarking by vm.benchmarking.collectAsState(); val pending by vm.pending.collectAsState()
     val tasks by vm.agentTasks.collectAsState()
@@ -302,7 +314,7 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
     val memoryEnabled by vm.memoryEnabled.collectAsState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.attachFile(uri) }
     val chat = chats.firstOrNull { it.id == active }
-    val modelName = models.firstOrNull { it.path == selected }?.name
+    val modelName = home.selected?.let { "$it · Home" } ?: models.firstOrNull { it.path == selected }?.name
     val drafts = rememberSaveable(saver = ChatDraftSaver) { mutableStateMapOf<Long, String>() }
     val text = drafts[active].orEmpty()
     var handledWidgetDraftKey by rememberSaveable { mutableIntStateOf(0) }
@@ -360,7 +372,7 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
             }
         }
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { showModels = true }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp), modifier = Modifier.weight(1f)) {
+            TextButton(onClick = { showModels = true }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp), modifier = Modifier.weight(1f).semantics { contentDescription = "Choose model" }) {
                 Text("${modelName ?: "Choose a model"} ⌄", color = Accent, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box {
@@ -374,6 +386,10 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
             if (chat?.yolo == true) TextButton(onClick = { vm.stop(); vm.setFlag("yolo", false) }) { Text("Stop auto actions", fontSize = 11.sp) }
         }
         if (chat?.yolo == true) Text("Actions run without asking", Modifier.padding(horizontal = 20.dp), color = Muted, fontSize = 11.sp)
+        if(home.selected != null) Text("Home · analysis only · chat excerpts and attached passages are shared", Modifier.padding(horizontal = 20.dp), color = Muted, fontSize = 11.sp)
+        homeJobs.firstOrNull { it.chat == active && !it.terminal }?.let { job ->
+            Text("Home: ${job.state} · ${job.error.ifBlank { job.snapshot.optString("detail") }}. Controls are in Work.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = Muted, fontSize = 12.sp)
+        }
         if (messages.isEmpty() && !busy) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -428,7 +444,7 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
             if (attachments.isNotEmpty()) TextButton(onClick = { showFiles = true }) { Text("${attachments.size} attached file${if (attachments.size == 1) "" else "s"} · Review", fontSize = 12.sp) }
-            if (messages.isEmpty() && text.isBlank()) Text(if (memoryEnabled) "Memory on · Review new details in You → Memory." else "Memory off · Saved details are not used or collected.", Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = Muted, fontSize = 12.sp)
+            if (messages.isEmpty() && text.isBlank()) Text(if (memoryEnabled) "Memory on · Review new details in Library → Memory." else "Memory off · Saved details are not used or collected.", Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = Muted, fontSize = 12.sp)
             Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(28.dp)).padding(4.dp), verticalAlignment = Alignment.Bottom) {
                 Box {
                     IconButton(onClick = { showComposerActions = true }, enabled = !busy) {
@@ -458,7 +474,10 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).navigationBarsPadding().verticalScroll(rememberScrollState())) {
             SectionTitle("Choose a model")
             if (models.isEmpty()) Text("Download a model to start chatting offline.", Modifier.padding(vertical = 16.dp), color = Muted)
-            models.forEach { model -> PaperRow(model.name, sizeLabel(model.bytes), if (model.path == selected) "Selected" else "Use") {
+            home.models.forEach { model -> PaperRow(model.name, "Home · analysis", if(home.selected == model.name) "Selected" else "Use") {
+                vm.setHomeModel(model.name); showModels = false
+            } }
+            models.forEach { model -> PaperRow(model.name, "Phone · ${sizeLabel(model.bytes)}", if (model.path == selected && home.selected == null) "Selected" else "Use") {
                 vm.setModel(model.path); showModels = false
             } }
             TextButton(onClick = { showModels = false; onModels() }, modifier = Modifier.fillMaxWidth()) { Text("Manage models") }

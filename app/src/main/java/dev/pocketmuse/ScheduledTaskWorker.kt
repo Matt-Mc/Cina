@@ -64,7 +64,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                     ?: error("The selected model is no longer on this phone.")
                 ModelAccess.mutex.withLock {
                     val tools = AssistantTools(applicationContext, store, scheduledModelPath = task.modelPath)
-                    val runtime = AssistantRuntime(applicationContext, store) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+                    val runtime = AssistantRuntime(applicationContext, store) { web, request, recent, files -> tools.menu(web, request, recent, files) }
                     val chat = Chat(0, task.title, false, false)
                     try {
                         withTimeout(8 * 60 * 1000L) {
@@ -93,8 +93,8 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                                 require(tools.succeeded(result)) { tools.resultMessage(result) }
                                 results.add(result)
                                 confirmedResults = tools.confirmedResults(results)
-                                answer = splitModelResponse(runtime.generate(
-                                    AssistantPrompt.toolFollowUp(task.prompt, request.name, result)
+                                answer = splitModelResponse(runtime.generateToolFollowUp(
+                                    task.prompt, request.name, result
                                 ) {}).answer
                             }
                             require(tools.parse(answer) == null) { "The scheduled task reached its tool limit." }

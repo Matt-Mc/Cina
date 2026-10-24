@@ -21,11 +21,14 @@ class SecretStore(context: Context) {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
-    fun put(name: String, value: String) {
-        if(value.isBlank()) { prefs.edit().remove(name).apply(); return }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        val packed = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        prefs.edit().putString(name, Base64.encodeToString(packed, Base64.NO_WRAP)).apply()
+    fun put(name: String, value: String, durable: Boolean = false) {
+        val editor = prefs.edit()
+        if(value.isBlank()) editor.remove(name) else {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
+            val packed = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+            editor.putString(name, Base64.encodeToString(packed, Base64.NO_WRAP))
+        }
+        if(durable) check(editor.commit()) { "Could not persist the encrypted connection. Check free storage and pair again." } else editor.apply()
     }
     fun get(name: String): String? {
         val saved = prefs.getString(name, null) ?: return null

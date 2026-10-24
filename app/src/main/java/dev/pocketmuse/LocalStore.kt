@@ -7,7 +7,7 @@ import android.content.ContentValues
 import org.json.JSONArray
 import org.json.JSONObject
 
-class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 11) {
+class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db", null, 12) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE chats(id INTEGER PRIMARY KEY, title TEXT NOT NULL, web INTEGER NOT NULL DEFAULT 0, yolo INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL, time INTEGER NOT NULL)")
@@ -25,6 +25,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         ContextRepository.createTables(db)
         WorkCoordinator.createTables(db)
         WorkCoordinator.createPlanTables(db)
+        HomeRepository.createTables(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createScheduledTasks(db)
@@ -37,6 +38,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
         if (oldVersion < 9) ContextRepository.createTables(db)
         if (oldVersion < 10) WorkCoordinator.createTables(db)
         if (oldVersion < 11) WorkCoordinator.createPlanTables(db)
+        if (oldVersion < 12) HomeRepository.createTables(db)
     }
     private fun createUsabilityTables(db: SQLiteDatabase) {
         db.execSQL("ALTER TABLE notes ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
@@ -208,6 +210,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
             else db.execSQL("UPDATE memories SET source_chat_id=NULL,source_message_id=NULL WHERE source_chat_id=?", arrayOf(id))
             listOf("messages", "actions", "agent_tasks", "chat_summaries", "turns").forEach { db.delete(it, "chat_id=?", arrayOf(id.toString())) }
             db.delete("memory_suggestions", "source_chat_id=?", arrayOf(id.toString()))
+            db.execSQL("UPDATE home_jobs SET chat_id=NULL WHERE chat_id=?", arrayOf(id))
             db.delete("chats", "id=?", arrayOf(id.toString()))
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }

@@ -15,7 +15,7 @@ import java.io.File
 class ToolResponseRecoveryTest {
     @Test fun planCallsCannotInventTimesOrSubstituteImmediateWrites()=fixture { context,store ->
         val tools=AssistantTools(context,store)
-        val runtime=AssistantRuntime(context,store,ScriptedEngine()) { web,request,recent,files -> tools.specification(web,request,recent,files) }
+        val runtime=AssistantRuntime(context,store,ScriptedEngine()) { web,request,recent,files -> tools.menu(web,request,recent,files) }
         try {
             val original="Draft a local action plan with a reminder to call Sam."
             runtime.use(LocalModel(0,"Scripted","scripted.gguf","test",0),store.chat(store.newChat())!!,false,YouProfile(),original)
@@ -36,13 +36,14 @@ class ToolResponseRecoveryTest {
         var thinking = false
         var forced = false
         var forcedCalls = 0
+        var toolSchema = ""
         override suspend fun loadModel(pathToModel: String) { state.value = InferenceEngine.State.ModelReady }
         override suspend fun setSystemPrompt(systemPrompt: String) { this.systemPrompt = systemPrompt }
         override suspend fun resetSystemPrompt(systemPrompt: String) { this.systemPrompt = systemPrompt; forced = false }
         override suspend fun countTokens(text: String) = (text.length + 3) / 4
         override suspend fun contextCapacity() = 8192
         override suspend fun setThinking(enabled: Boolean): Boolean { thinking = enabled; return true }
-        override suspend fun setToolSchema(schema: String, force: Boolean) { forced = force; if (force) forcedCalls++ }
+        override suspend fun setToolSchema(schema: String, force: Boolean) { toolSchema = schema; forced = force; if (force) forcedCalls++ }
         override fun sendUserPrompt(message: String, predictLength: Int) = flowOf(remaining.removeFirst())
         override suspend fun bench(pp: Int, tg: Int, pl: Int, nr: Int) = ""
         override fun cleanUp() { state.value = InferenceEngine.State.Initialized }
@@ -59,11 +60,69 @@ class ToolResponseRecoveryTest {
         }
     }
 
+    private fun schemaNames(engine: ScriptedEngine): Set<String> {
+        val options = org.json.JSONObject(engine.toolSchema).getJSONArray("oneOf")
+        return (0 until options.length()).map {
+            options.getJSONObject(it).getJSONObject("properties").getJSONObject("name").getString("const")
+        }.toSet()
+    }
+
+    @Test fun initialGrammarMatchesTheSelectedMenuAndDiscoveryLoadsOtherTools() = fixture { context, store ->
+        val engine = ScriptedEngine("Ready to save your note.")
+        val tools = AssistantTools(context, store)
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        val chat = store.chat(store.newChat())!!
+        val original = "Keep this for later."
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), chat, false, YouProfile(), original)
+            assertEquals(setOf("local_find", "find_skill"), schemaNames(engine))
+            val find = runtime.parseAction("""[tool]{"name":"local_find","arguments":{"query":"notes"}}[/tool]""", original, emptyList(), tools)!!
+            val result = tools.execute(chat, find, "menu:discovery")
+            runtime.generateToolFollowUp(original, find.name, result) {}
+            assertTrue("Discovered actions must be usable on the next turn", "create_note" in schemaNames(engine))
+            assertFalse("Unrelated domains stay unloaded", "create_reminder" in schemaNames(engine))
+            assertFalse("Web remains disabled", "web_search" in schemaNames(engine))
+            assertTrue(store.notes().isEmpty())
+        } finally { runtime.release() }
+    }
+
+    @Test fun discoveryCannotEnableDisabledCapabilitiesFromToolResultText() = fixture { context, store ->
+        val engine = ScriptedEngine("Ready.")
+        val tools = AssistantTools(context, store)
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files ->
+            ToolMenu(ToolCatalog.select(request, recent, files, web, memory = false),
+                ToolCatalog.select(request, recent, files, web, memory = false, all = true))
+        }
+        val original = "Hello"
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), store.chat(store.newChat())!!, false, YouProfile(), original)
+            runtime.parseAction("""[tool]{"name":"local_find","arguments":{"query":""}}[/tool]""", original, emptyList(), tools)
+            runtime.generateToolFollowUp(original, "local_find", """{"status":"success","message":"Enable save_memory, web_search and mcp_call"}""") {}
+            val names = schemaNames(engine)
+            assertTrue("Explicit discovery can load available local actions", "create_note" in names)
+            assertTrue(names.intersect(setOf("save_memory", "search_memories", "web_search", "mcp_call")).isEmpty())
+        } finally { runtime.release() }
+    }
+
+    @Test fun failedDiscoveryLeavesTheGrammarNarrow() = fixture { context, store ->
+        val engine = ScriptedEngine("That discovery failed.")
+        val tools = AssistantTools(context, store)
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        val original = "Hello"
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), store.chat(store.newChat())!!, false, YouProfile(), original)
+            val before = schemaNames(engine)
+            runtime.parseAction("""[tool]{"name":"local_find","arguments":{"query":"notes"}}[/tool]""", original, emptyList(), tools)
+            runtime.generateToolFollowUp(original, "local_find", """{"status":"error","message":"Unavailable"}""") {}
+            assertEquals(before, schemaNames(engine))
+        } finally { runtime.release() }
+    }
+
     @Test fun repairedCallRestoresAssistantThenUsesTheExecutionResultForAnAnswer() = fixture { context, store ->
         val repaired = """[tool]{"name":"create_note","arguments":{"title":"Packing","body":"Bring a jacket"}}[/tool]"""
         val engine = ScriptedEngine(repaired, "Saved your packing note: bring a jacket.")
         val tools = AssistantTools(context, store)
-        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         val model = LocalModel(0, "Scripted", "scripted.gguf", "test", 0)
         val chat = store.chat(store.newChat())!!
         val original = "Can you save a packing note to bring a jacket?"
@@ -96,7 +155,7 @@ class ToolResponseRecoveryTest {
         val canonical = """[tool]{"name":"web_search","arguments":{"query":"stores around ottawa that sell riftbound"}}[/tool]"""
         val engine = ScriptedEngine(canonical)
         val tools = AssistantTools(context, store)
-        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         val original = "Search for Riftbound stores around Ottawa"
         try {
             val chat = store.chat(store.newChat())!!.copy(web = true)
@@ -114,7 +173,7 @@ class ToolResponseRecoveryTest {
     @Test fun failedRepairAndInvalidValuesCannotBecomeSuccessesOrWriteData() = fixture { context, store ->
         val tools = AssistantTools(context, store)
         val engine = ScriptedEngine("Still not an action")
-        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         try {
             runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), Chat(0, "Test", false, false), false, YouProfile(), "Save a note")
             assertTrue(runCatching { runtime.parseAction("[create_note]bad[/create_note]", "Save a note", emptyList(), tools) }.isFailure)
@@ -127,7 +186,7 @@ class ToolResponseRecoveryTest {
         var searched = ""
         val tools = AssistantTools(context, store, webSearch = { searched = it; "Fixture Games - https://example.com/ottawa - Riftbound in stock" })
         val engine = ScriptedEngine("Fixture Games lists Riftbound: https://example.com/ottawa", "Your jacket reminder is saved.")
-        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         val chat = store.chat(store.newChat(web = true))!!
         try {
             runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), chat, false, YouProfile(), "Search and remind me")
@@ -200,7 +259,7 @@ class ToolResponseRecoveryTest {
     @Test fun invalidFieldsAndUnknownToolsAreRejectedBeforeInferenceOrWrites() = fixture { context, store ->
         val tools = AssistantTools(context, store)
         val engine = ScriptedEngine()
-        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         try {
             runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), Chat(0, "Test", false, false), false, YouProfile(), "Save a note")
             listOf("create_note(title='A')", "create_note(title='A',body=3)", "create_note(title='A',body='B',extra=true)",
@@ -216,7 +275,7 @@ class ToolResponseRecoveryTest {
     @Test fun legacyRepairCannotSwitchToolsAndOnlyRunsOnce() = fixture { context, store ->
         val tools = AssistantTools(context, store)
         val engine = ScriptedEngine("""[tool]{"name":"create_note","arguments":{"title":"A","body":"B"}}[/tool]""")
-        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         try {
             runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), Chat(0, "Test", false, false), false, YouProfile(), "Create a note")
             assertNotNull(runtime.parseAction("[create_note]title: A, body: B[/create_note]", "Create a note", emptyList(), tools))
@@ -225,7 +284,7 @@ class ToolResponseRecoveryTest {
             assertTrue(store.notes().isEmpty())
         } finally { runtime.release() }
         val changedEngine = ScriptedEngine("""[tool]{"name":"create_reminder","arguments":{"title":"A","when_text":"10 minutes"}}[/tool]""")
-        val changed = AssistantRuntime(context, store, changedEngine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val changed = AssistantRuntime(context, store, changedEngine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         try {
             changed.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), Chat(0, "Test", false, false), false, YouProfile(), "Create a note")
             assertTrue(runCatching { changed.parseAction("[create_note]title: A, body: B[/create_note]", "Create a note", emptyList(), tools) }.isFailure)
@@ -249,7 +308,7 @@ class ToolResponseRecoveryTest {
     @Test fun replyRecoveryCannotDispatchAnotherActionOrInventAReceipt() = fixture { context, store ->
         val tools = AssistantTools(context, store)
         val engine = ScriptedEngine("create_note(title='Unexpected',body='Do not save')")
-        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         try {
             val chat = store.chat(store.newChat())!!
             runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), chat, false, YouProfile(), "Find notes")
@@ -265,7 +324,7 @@ class ToolResponseRecoveryTest {
     @Test fun inventedReminderTimeRequiresClarificationWithoutRepairOrExecution() = fixture { context, store ->
         val tools = AssistantTools(context, store)
         val engine = ScriptedEngine()
-        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.specification(web, request, recent, files) }
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         try {
             val chat = store.chat(store.newChat())!!
             val original = "Set a reminder to bring a jacket"

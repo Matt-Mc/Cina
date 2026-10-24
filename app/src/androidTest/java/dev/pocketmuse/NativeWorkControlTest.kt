@@ -22,11 +22,14 @@ class NativeWorkControlTest {
         require(modelFile.isFile) { "Requested model is missing" }
         val file=File(base.filesDir,"native-work-${System.nanoTime()}.db")
         val context=object:ContextWrapper(base) { override fun getDatabasePath(name:String)=file }
-        val evidence=File(base.getExternalFilesDir(null),"work-model-$name.txt")
+        val evaluationId=InstrumentationRegistry.getArguments().getString("evaluation_id")?.also {
+            require(it.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+        }
+        val evidence=File(base.getExternalFilesDir(null),"work-model-$name${evaluationId?.let { "-$it" }.orEmpty()}.txt")
         evidence.writeText("Production runtime work-control smoke test v2 (explicit text boundaries and split controls): $name\n")
         try { ModelAccess.mutex.withLock { LocalStore(context).use { store ->
             val dispatcher=AssistantTools(context,store)
-            val runtime=AssistantRuntime(context,store) { web,request,recent,files -> dispatcher.specification(web,request,recent,files) }
+            val runtime=AssistantRuntime(context,store) { web,request,recent,files -> dispatcher.menu(web,request,recent,files) }
             val model=LocalModel(0,name,modelFile.absolutePath,"test",modelFile.length())
             val chat=store.chat(store.newChat())!!
             val work=WorkCoordinator(store)
@@ -56,7 +59,7 @@ class NativeWorkControlTest {
                     if(inspect.name==case.tool || inspect.name !in setOf("read_work","list_work")) break
                     val result=WorkTools.execute(store,inspect,"native-read-$index","read-$read")
                     prior+=result;evidence.appendText("\nCase $index read $read: $raw\n")
-                    raw=runtime.generate(AssistantPrompt.toolFollowUp(case.prompt,inspect.name,result)) {}
+                    raw=runtime.generateToolFollowUp(case.prompt,inspect.name,result) {}
                     parsed=runCatching { runtime.parseAction(raw,case.prompt,prior,dispatcher) {} }
                 }
                 val request=parsed.getOrNull()

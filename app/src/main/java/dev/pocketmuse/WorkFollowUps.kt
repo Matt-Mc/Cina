@@ -34,7 +34,7 @@ internal object WorkFollowUps {
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             val open=PendingIntent.getActivity(context,7301,intent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val notification=Notification.Builder(context,CHANNEL).setSmallIcon(android.R.drawable.ic_popup_reminder)
-                .setContentTitle(title).setContentText("Open Tasks → Actions to review details and verified results.")
+                .setContentTitle(title).setContentText("Open Work → Actions to review details and verified results.")
                 .setVisibility(Notification.VISIBILITY_PRIVATE).setContentIntent(open).setAutoCancel(true).setOnlyAlertOnce(true).build()
             try { manager.notify("work:${task.id}",0,notification);true } catch(_: SecurityException) { false }
         }

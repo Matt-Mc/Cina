@@ -25,7 +25,7 @@ import androidx.compose.ui.semantics.semantics
 @Composable
 internal fun TasksScreen(vm: AssistantViewModel, tab: Int, onTab: (Int) -> Unit, onOpenChat: () -> Unit, onOpenResult: (String) -> Unit) {
     LaunchedEffect(Unit) { while (true) { delay(5_000); vm.refresh() } }
-    Page("Tasks", "Plans to follow, things to remember, and prompts for later.") {
+    Page("Work", "Progress, approvals and results in one place.") {
         TextButton(onClick={ onTab(4) }) { Text("Work overview") }
         ScreenTabs(listOf("Goals", "Reminders", "Scheduled", "Actions"), tab, onTab)
         when (tab) {

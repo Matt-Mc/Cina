@@ -99,7 +99,7 @@ class WorkPlanTest {
         db.execSQL("CREATE TABLE old_work AS SELECT id,revision,state,kind,title,body,when_ms,source_id,proposal_id,proposal_revision,approved_hash,approval_until,result_id,message FROM durable_work")
         removeWorkSchemaForMigrationTest(db);WorkCoordinator.createTables(db);db.execSQL("INSERT INTO durable_work SELECT * FROM old_work");db.execSQL("DROP TABLE old_work");db.version=10;store.close()
         LocalStore(context).use { upgraded ->
-            val next=WorkCoordinator(upgraded);assertEquals(11,upgraded.readableDatabase.version)
+            val next=WorkCoordinator(upgraded);assertEquals(12,upgraded.readableDatabase.version)
             assertEquals("completed",next.task(done)!!.steps.single().state);next.execute(done)
             assertEquals("waiting_for_approval",next.task(queued)!!.state);next.execute(queued);assertEquals(1,upgraded.notes().size)
         }

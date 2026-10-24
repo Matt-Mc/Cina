@@ -20,7 +20,7 @@ class WorkOverviewTest {
         val id=LocalStore(base).use { WorkCoordinator(it).save(WorkAction("note","Overview fixture","Private result")) }
         try {
             compose.onNodeWithContentDescription("Open menu").performClick()
-            compose.onNodeWithText("Tasks").performClick()
+            compose.onNodeWithText("Work").performClick()
             compose.onNodeWithText("Work overview").performClick()
             compose.onNodeWithText("Needs your attention").assertIsDisplayed()
             compose.waitUntil(10000) { compose.onAllNodesWithText("Overview fixture").fetchSemanticsNodes().isNotEmpty() }

@@ -73,7 +73,7 @@ class InboxViewModel(application: Application, private val savedState: SavedStat
                         val path = getApplication<Application>().getSharedPreferences("settings", 0).getString("model", null)
                         val model = store.models().firstOrNull { it.path == path } ?: error("Choose a downloaded model in Settings → Models, then try again.")
                         withTimeout(180_000) { ModelAccess.mutex.withLock {
-                            val runtime = AssistantRuntime(getApplication(), store) { _, _, _, _ -> "" }
+                            val runtime = AssistantRuntime(getApplication(), store) { _, _, _, _ -> ToolMenu(emptyList(), emptyList()) }
                             try {
                                 _message.value = "Reading captured material on this phone…"
                                 val result = runtime.interpretInbox(model, source)

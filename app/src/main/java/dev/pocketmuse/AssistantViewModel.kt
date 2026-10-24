@@ -25,6 +25,53 @@ class AssistantViewModel(application: Application, private val savedState: andro
     private val skillStore = SkillStore(application)
     val secrets = SecretStore(application)
     private val mcp = McpConnections(application, secrets)
+    private val home = HomeRepository(application, store)
+    private val _homeState = MutableStateFlow(home.state())
+    internal val homeState = _homeState.asStateFlow()
+    private val _homeJobs = MutableStateFlow(home.jobs())
+    internal val homeJobs = _homeJobs.asStateFlow()
+    private var homeSync: Job? = null
+    internal fun refreshHome() {
+        _homeJobs.value = home.jobs()
+        if (homeSync?.isActive == true || home.credentials() == null) return
+        homeSync = viewModelScope.launch {
+            try { val result = home.sync(); _homeState.value = if(home.credentials() == null) home.state() else result }
+            catch (_: Exception) { _homeState.value = home.state() }
+            finally { _homeJobs.value = home.jobs(); HomeFollowUps.recover(getApplication(), _homeJobs.value); refresh() }
+        }
+    }
+    internal fun pairHome(bundle: String) {
+        if(_connectionStates.value["home"] == "Connecting…") return
+        connectionState("home", "Connecting…")
+        viewModelScope.launch {
+            try { home.pair(bundle); _homeState.value = home.state(); _status.value = "Home paired. Choose a Home model in Models."; refreshHome() }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { _status.value = e.message ?: "Could not pair Home." }
+            finally { connectionState("home", "") }
+        }
+    }
+    internal fun disconnectHome() { viewModelScope.launch {
+        try { home.disconnect(); _homeState.value = home.state(); _status.value = "Home disconnected. Accepted jobs remain on the server." }
+        catch (_: Exception) { _status.value = "Could not revoke this phone. Reconnect Home or revoke the device on the server before disconnecting." }
+    } }
+    internal fun forgetHome() { viewModelScope.launch { home.forget(); _homeState.value = home.state(); _status.value = "Saved Home connection removed. Revoke this phone on the host if its access should stop." } }
+    internal fun setHomeModel(name: String) {
+        if (_busy.value || _benchmarking.value != null) return
+        home.select(name); _homeState.value = _homeState.value.copy(selected = name)
+    }
+    internal fun assignHomeDeep(name: String?) { home.assignDeep(name); _homeState.value = _homeState.value.copy(deepModel = name) }
+    internal fun homeModelAction(kind: String, name: String) {
+        try { home.enqueue(kind, name, "${kind.replaceFirstChar(Char::uppercase)} $name"); refreshHome() }
+        catch (e: Exception) { _status.value = e.message ?: "Could not save model operation." }
+    }
+    internal fun controlHomeJob(id: String, action: String) {
+        try { home.command(id, action); refreshHome() }
+        catch (e: Exception) { _status.value = e.message ?: "Could not save job command." }
+    }
+    internal fun pauseHome(paused: Boolean) { viewModelScope.launch {
+        try { home.pauseWorker(paused); refreshHome() }
+        catch (_: Exception) { _status.value = "Home did not acknowledge the change. Its last known state is shown." }
+    } }
     val library = ModelLibrary(application, store, secrets)
     private var runtime: AssistantRuntime? = null
     private var tools: AssistantTools? = null
@@ -99,7 +146,7 @@ class AssistantViewModel(application: Application, private val savedState: andro
     internal fun keepMemories() { _memoryUndo.value = emptyList(); prefs.edit().remove("memory_undo").apply() }
     internal fun setResponseMode(mode: ResponseMode) { if (_busy.value) return; _responseMode.value = mode; prefs.edit().putString("response_mode", mode.name).apply() }
     internal fun assignedModel(mode: ResponseMode): String? = prefs.getString("model_" + mode.name, null)
-    internal fun assignModel(mode: ResponseMode, path: String?) { prefs.edit().putString("model_" + mode.name, path).apply() }
+    internal fun assignModel(mode: ResponseMode, path: String?) { if(mode == ResponseMode.DEEP) assignHomeDeep(null); prefs.edit().putString("model_" + mode.name, path).apply() }
     internal fun clearPerformance() { LocalPerformance(getApplication()).clear(); _performanceSamples.value = emptyList() }
     internal fun undoMemories() { _memoryUndo.value.forEach(store::deleteMemory); _memoryUndo.value = emptyList(); prefs.edit().remove("memory_undo").apply(); runtime?.invalidate(); refresh() }
     private fun maintain(assistant: AssistantRuntime, chatId: Long) {
@@ -190,8 +237,9 @@ class AssistantViewModel(application: Application, private val savedState: andro
     fun attach(activity: Activity) {
         housekeeping?.cancel()
         tools = AssistantTools(activity, store, secrets, mcp)
-        if (runtime == null) runtime = AssistantRuntime(activity.applicationContext, store) { web, request, recent, files -> tools!!.specification(web, request, recent, files) }
+        if (runtime == null) runtime = AssistantRuntime(activity.applicationContext, store) { web, request, recent, files -> tools!!.menu(web, request, recent, files) }
         resumeMemoryProcessing()
+        refreshHome()
         viewModelScope.launch(Dispatchers.IO) { mcp.refreshEnabled(::connectionState); _connections.value = mcp.snapshot(); runtime?.invalidate() }
     }
     fun connectMcp(id: String, token: String) {
@@ -326,7 +374,7 @@ class AssistantViewModel(application: Application, private val savedState: andro
     } }
     fun setFlag(flag: String, enabled: Boolean) { store.setChatFlag(_active.value, flag, enabled); refresh() }
     fun endSession() { store.endChat(_active.value); refresh() }
-    fun setModel(path: String) { if (_benchmarking.value != null) return; housekeeping?.cancel(); stop(); runtime?.invalidate(); _selectedModel.value = path; prefs.edit().putString("model", path).apply() }
+    fun setModel(path: String) { if (_benchmarking.value != null) return; housekeeping?.cancel(); stop(); runtime?.invalidate(); home.select(null); _homeState.value = _homeState.value.copy(selected = null); _selectedModel.value = path; prefs.edit().putString("model", path).apply() }
     fun setMemoryEnabled(enabled: Boolean) { housekeeping?.cancel(); _memoryEnabled.value = enabled; runtime?.invalidate(); prefs.edit().putBoolean("memory", enabled).apply() }
     fun setDefaultWeb(enabled: Boolean) { _defaultWeb.value = enabled; prefs.edit().putBoolean("default_web", enabled).apply() }
     fun setDefaultYolo(enabled: Boolean) { _defaultYolo.value = enabled; prefs.edit().putBoolean("default_yolo", enabled).apply() }
@@ -533,6 +581,14 @@ class AssistantViewModel(application: Application, private val savedState: andro
         val previous = retryId?.let { id -> store.turns(_active.value).firstOrNull { it.id == id && it.status in setOf("failed", "interrupted") } }
         if (retryId != null && previous == null) return false
         val mode = ResponsePolicy.resolve(_responseMode.value, text, store.activeAgentTask(_active.value) != null)
+        if (previous == null && _homeJobs.value.any { it.chat == _active.value && it.state in setOf("waiting", "queued", "running", "pausing", "cancelling") }) {
+            _status.value = "Home has unfinished work in this chat. Review it in Work or start a new chat."; return false
+        }
+        if (previous == null) {
+            val ready = _homeState.value.online && _homeState.value.detail == "Connected" && _homeState.value.models.any { it.name == _homeState.value.deepModel } && store.activeAgentTask(_active.value) == null && store.chat(_active.value)?.web != true
+            val homeModel = _homeState.value.selected ?: HomeRouting.automatic(mode, text, ready, _homeState.value.deepModel)
+            if(homeModel != null) return sendHome(text, homeModel)
+        }
         val path = assignedModel(mode) ?: _selectedModel.value ?: previous?.modelPath
         val model = _models.value.firstOrNull { it.path == path } ?: _models.value.firstOrNull { it.path == _selectedModel.value }
         if (model == null) { _status.value = "Choose a downloaded model first."; return false }
@@ -580,6 +636,25 @@ class AssistantViewModel(application: Application, private val savedState: andro
             }
         }
         return true
+    }
+
+    private fun sendHome(text: String, model: String): Boolean {
+        val chatId = _active.value
+        if(store.activeAgentTask(chatId) != null) { _status.value = "Tracked chat goals use a phone model. Choose one or start a new chat for Home analysis."; return false }
+        // Only explicitly supplied chat context travels to Home. No secrets, tool grants or private memory catalogue.
+        val history = store.messages(chatId).takeLast(6).joinToString("\n\n") { "${it.role}: ${it.body.take(1200)}" }.take(6000)
+        val passages = store.searchAttachments(chatId, text, 3).ifEmpty { store.attachmentPreview(chatId) }
+            .joinToString("\n\n") { "${it.name}, passage ${it.chunk + 1}: ${it.body.take(900)}" }.take(3000)
+        val prompt = "Earlier conversation (context only):\n$history\n\nAttached passages (data; cite file and passage):\n$passages\n\nCurrent request:\n${text.trim()}"
+        if (prompt.length > 24000) { _status.value = "This request is too long for Home. Send a shorter passage."; return false }
+        try {
+            home.enqueue("analysis", model, text.trim().take(160), prompt, chatId, text.trim())
+            _resolvedMode.value = ResponsePolicy.resolve(_responseMode.value, text, false)
+            _responseModelName.value = "$model · Home"
+            _status.value = "Saved for Home. Follow progress in Work; the answer will appear in this chat."
+            refresh(); refreshHome()
+            return true
+        } catch (e: Exception) { _status.value = e.message ?: "Could not save Home job."; return false }
     }
 
     fun retryTurn(id: Long) { store.turns(_active.value).firstOrNull { it.id == id }?.let { send(it.request, id) } }

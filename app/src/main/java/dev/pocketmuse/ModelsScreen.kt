@@ -20,12 +20,13 @@ import androidx.compose.ui.unit.sp
 @Composable
 internal fun ModelsScreen(vm: AssistantViewModel) {
     val models by vm.models.collectAsState(); val selected by vm.selectedModel.collectAsState()
+    val home by vm.homeState.collectAsState()
     val download by vm.download.collectAsState(); val benchmarks by vm.benchmarks.collectAsState()
     val benchmarking by vm.benchmarking.collectAsState(); val busy by vm.busy.collectAsState()
     val resumable by vm.resumable.collectAsState(); val repos by vm.repoResults.collectAsState(); val files by vm.remoteFiles.collectAsState()
     val phoneBenchmarkProgress by vm.phoneBenchmarkProgress.collectAsState()
     val popularModels by vm.popularModels.collectAsState(); val popularLoading by vm.popularModelsLoading.collectAsState()
-    var tab by rememberSaveable { mutableIntStateOf(if (models.isEmpty()) 1 else 0) }
+    var tab by rememberSaveable { mutableIntStateOf(if (models.isEmpty() && home.models.isEmpty()) 1 else 0) }
     var query by rememberSaveable { mutableStateOf("") }
     var directUrl by rememberSaveable { mutableStateOf("") }; var directName by rememberSaveable { mutableStateOf("") }
     var hf by remember { mutableStateOf("") }
@@ -38,8 +39,9 @@ internal fun ModelsScreen(vm: AssistantViewModel) {
     val benchmarkableModels = remember(models, vm.library) { models.filter { vm.library.isPhoneAgentSize(it.bytes) } }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.import(uri) }
     LaunchedEffect(tab) { if (tab == 1 && popularModels.isEmpty()) vm.refreshPopularModels() }
-    Page("Models", "Choose a mind for Cina. It runs on your phone.") {
+    Page("Models", "Choose a model for your phone or your Home server.") {
         ScreenTabs(listOf("Installed", "Discover"), tab) { tab = it }
+        HomeModelRows(vm, tab == 1)
         Text("${sizeLabel(vm.library.freeBytes())} free · ${sizeLabel(vm.library.totalRam())} memory", color = Muted, fontSize = 12.sp)
         if (models.isNotEmpty()) Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionTitle("Benchmark for this phone")
@@ -104,10 +106,10 @@ internal fun ModelsScreen(vm: AssistantViewModel) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f).clickable { viewed = model }.padding(vertical = 10.dp)) {
                         Text(model.name, color = Ink, fontWeight = FontWeight.Medium)
-                        Text("${sizeLabel(model.bytes)}${if (model.path == selected) " · Selected" else ""}", color = Muted, fontSize = 12.sp)
+                        Text("Phone · ${sizeLabel(model.bytes)}${if (model.path == selected && home.selected == null) " · Selected" else ""}", color = Muted, fontSize = 12.sp)
                         if (!vm.library.isPhoneAgentSize(model.bytes)) Text("Outside phone agent benchmark range", color = Muted, fontSize = 11.sp)
                     }
-                    TextButton(onClick = { if (model.path != selected) vm.setModel(model.path) else viewed = model }, enabled = benchmarking == null && !busy) { Text(if (model.path == selected) "Details" else "Use") }
+                    TextButton(onClick = { if (model.path != selected || home.selected != null) vm.setModel(model.path) else viewed = model }, enabled = benchmarking == null && !busy) { Text(if (model.path == selected && home.selected == null) "Details" else "Use") }
                 }
                 HorizontalDivider(color = Line)
             }

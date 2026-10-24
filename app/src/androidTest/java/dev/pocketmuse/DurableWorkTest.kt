@@ -101,7 +101,7 @@ class DurableWorkTest {
     @Test fun schemaNineUpgradePreservesLibraryAndCreatesNoApprovals()=fixture { context,store,_ ->
         source(store);removeWorkSchemaForMigrationTest(store.writableDatabase);store.writableDatabase.version=9;store.close()
         LocalStore(context).use { upgraded ->
-            assertEquals(11,upgraded.readableDatabase.version);assertTrue(WorkCoordinator(upgraded).tasks().isEmpty())
+            assertEquals(12,upgraded.readableDatabase.version);assertTrue(WorkCoordinator(upgraded).tasks().isEmpty())
             assertEquals("accepted",InboxRepository(upgraded).review("source")!!.proposals.single().state)
         }
     }
