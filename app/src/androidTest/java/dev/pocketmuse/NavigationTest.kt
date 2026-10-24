@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
+import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -40,7 +41,8 @@ class NavigationTest {
             compose.onNodeWithText("Library").performClick()
             compose.onNodeWithText("Inbox").performClick()
             compose.onNodeWithText("Something to keep").performTextInput(marker)
-            compose.onNodeWithText("Save to Inbox").performClick()
+            closeSoftKeyboard()
+            compose.onNodeWithText("Save to Inbox").performScrollTo().assertIsDisplayed().performClick()
             compose.waitUntil(10_000) {
                 LocalStore(ApplicationProvider.getApplicationContext()).use { InboxRepository(it).items().any { item -> item.title == marker } }
             }
