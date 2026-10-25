@@ -74,8 +74,7 @@ class ContextLibraryFlowTest {
         compose.onNodeWithText("Open source").performScrollTo().assertIsDisplayed()
         compose.onRoot().captureToImage().asAndroidBitmap().let { bitmap -> File(base.getExternalFilesDir(null),"context-search.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
         compose.onNodeWithText("Open source").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("Cedar test $id",substring=true).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Captured content").performScrollTo().assertIsDisplayed()
+        assertSourceOpened()
         // A source link from the new Library entry must also work when Inbox's nested library was open.
         compose.onNodeWithText("Knowledge & projects").performScrollTo().performClick()
         compose.onNodeWithContentDescription("Open menu").performClick()
@@ -94,7 +93,13 @@ class ContextLibraryFlowTest {
         // The keyboard can leave results outside LazyColumn's composed viewport.
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Open source"))
         compose.onNodeWithText("Open source").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("Cedar test $id",substring=true).fetchSemanticsNodes().isNotEmpty() }
+        assertSourceOpened()
+    }
+
+    private fun assertSourceOpened() {
+        // The title also appears in results and Inbox rows while the source is loading.
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Captured content").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Cedar test $id").assertExists()
         compose.onNodeWithText("Captured content").performScrollTo().assertIsDisplayed()
     }
 }
