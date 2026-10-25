@@ -16,6 +16,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -82,10 +84,15 @@ class NavigationTest {
         }
         capture("consolidated-menu.png")
         compose.onNodeWithText("Library").performClick()
-        listOf("Inbox", "Notes", "Knowledge & projects", "Memory").forEach { compose.onNodeWithText(it).performScrollTo().assertIsDisplayed() }
+        listOf("Inbox", "Notes", "Knowledge & projects", "Memory").forEach {
+            compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText(it))
+            compose.onNodeWithText(it).assertIsDisplayed()
+        }
         capture("consolidated-library.png")
-        compose.onNodeWithText("Manage notes").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText("Manage notes"))
+        compose.onNodeWithText("Manage notes").performClick()
         compose.onNodeWithContentDescription("Go back").performClick()
+        compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText("Knowledge & projects"))
         compose.onNodeWithText("Knowledge & projects").assertIsDisplayed()
     }
 

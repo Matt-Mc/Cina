@@ -37,7 +37,8 @@ class DurableWorkFlowTest {
     @Test fun inboxTaskSurvivesRecreationAndWorkerRunsOnlyAfterExactApproval() {
         compose.onNodeWithContentDescription("Open menu").performClick();compose.onNodeWithText("Library").performClick();compose.onNodeWithText("Inbox").performClick()
         compose.onAllNodesWithText("Open")[0].performScrollTo().performClick()
-        compose.onNodeWithText("Create task for review").performScrollTo().performClick()
+        compose.onNodeWithText("Create task…").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Create a local task").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Task title").performScrollTo().performTextReplacement(title)
         compose.onNodeWithText("Note content").performScrollTo().performTextReplacement("Bring the blue bag and charger.")
         compose.onNodeWithText("Add step").performScrollTo().performClick()
@@ -46,7 +47,9 @@ class DurableWorkFlowTest {
         compose.onNodeWithText("Save task for review").performClick()
         compose.waitUntil(10_000) { LocalStore(base).use { WorkCoordinator(it).tasks().any { task -> task.sourceId==sourceId } } }
         LocalStore(base).use { Assert.assertTrue(it.notes().none { note -> note.title==title }) }
-        compose.onNodeWithContentDescription("Open menu").performClick();compose.onNodeWithText("Work").performClick();compose.onNodeWithText("Actions").performClick()
+        compose.onNodeWithContentDescription("Open menu").performClick();compose.onNodeWithText("Work").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("All work & filters").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("All work & filters").performClick();compose.onNodeWithText("Actions").performClick()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("Review action").performScrollTo().performClick()
         compose.onNodeWithText("Bring the blue bag and charger.").performScrollTo().assertIsDisplayed()
@@ -60,8 +63,9 @@ class DurableWorkFlowTest {
             val notes=store.notes().filter { it.title==title };Assert.assertEquals(1,notes.size);Assert.assertEquals("Bring the blue bag and charger.",notes.single().body)
             Assert.assertEquals(1,store.notes().count { it.title=="$title second" })
         }
-        compose.onNodeWithContentDescription("Open menu").performClick();compose.onNodeWithText("Work").performClick();compose.onNodeWithText("Actions").performClick()
-        compose.onNodeWithText("Show finished tasks").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Open menu").performClick();compose.onNodeWithText("Work").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(title).performScrollTo().performClick()
         compose.onNodeWithText("Task history").performScrollTo().performClick()
         compose.onAllNodes(hasText("Verified note #",substring=true) and hasAnyAncestor(isDialog())).assertCountEquals(2)
     }
