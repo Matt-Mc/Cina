@@ -36,7 +36,7 @@ class ContextLibraryFlowTest {
     @Test fun createProjectPromoteCorrectAndRetrieveWithSourceLink() {
         compose.onNodeWithContentDescription("Open menu").performClick()
         compose.onNodeWithText("Library").performClick()
-        compose.onNodeWithText("Inbox").performClick()
+        openLibraryDestination("Inbox")
         compose.onNodeWithText("Knowledge & projects").performClick()
         compose.onNodeWithText("Storage & backup").performClick()
         compose.onNodeWithText("Storage & backup").assertIsDisplayed()
@@ -79,8 +79,8 @@ class ContextLibraryFlowTest {
         compose.onNodeWithText("Knowledge & projects").performScrollTo().performClick()
         compose.onNodeWithContentDescription("Open menu").performClick()
         compose.onNodeWithText("Library").performClick()
-        compose.onNodeWithText("Knowledge & projects").performClick()
-        compose.onNodeWithText("Back to Library").assertIsDisplayed()
+        openLibraryDestination("Knowledge & projects")
+        compose.onNodeWithText("Back to Library").performScrollTo().assertIsDisplayed()
         // This destination restores its prior search draft when the navigation state is retained.
         compose.onNodeWithText("Search saved context").performTextReplacement("green")
         closeSoftKeyboard()
@@ -101,5 +101,14 @@ class ContextLibraryFlowTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithText("Captured content").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Cedar test $id").assertExists()
         compose.onNodeWithText("Captured content").performScrollTo().assertIsDisplayed()
+    }
+
+    private fun openLibraryDestination(label: String) {
+        compose.onNodeWithContentDescription("Saved library items").assertExists()
+        lateinit var library: LibraryViewModel
+        compose.runOnIdle { library = ViewModelProvider(compose.activity)[LibraryViewModel::class.java] }
+        compose.waitUntil(10_000) { !library.loading.value }
+        compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText(label))
+        compose.onNodeWithText(label).performScrollTo().assertIsDisplayed().performClick()
     }
 }
