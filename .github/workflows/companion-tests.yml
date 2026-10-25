@@ -42,6 +42,9 @@ jobs:
       - name: Check container TLS, pairing and controls
         working-directory: ${{ env.CINA_DEPLOY_DIR }}
         run: docker compose exec -T companion python - < "$GITHUB_WORKSPACE/companion/container_smoke.py"
+      - name: Download a tiny Hugging Face model through Home
+        working-directory: ${{ env.CINA_DEPLOY_DIR }}
+        run: docker compose exec -T companion python - < "$GITHUB_WORKSPACE/companion/hub_smoke.py"
       - name: Remove, redeploy with saved data, then delete volumes
         working-directory: ${{ env.CINA_DEPLOY_DIR }}
         run: |

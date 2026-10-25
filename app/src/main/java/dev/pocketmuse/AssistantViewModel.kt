@@ -59,8 +59,17 @@ class AssistantViewModel(application: Application, private val savedState: andro
         if (_busy.value || _benchmarking.value != null) return
         home.select(name); _homeState.value = _homeState.value.copy(selected = name)
     }
-    internal fun assignHomeDeep(name: String?) { home.assignDeep(name); _homeState.value = _homeState.value.copy(deepModel = name) }
+    internal fun assignHomeDeep(name: String?) {
+        home.assignDeep(name)
+        val selected = _homeState.value.selected?.let { if(name != null) name else it }
+        if(selected != _homeState.value.selected) home.select(selected)
+        _homeState.value = _homeState.value.copy(deepModel = name, selected = selected)
+    }
     internal fun homeModelAction(kind: String, name: String) {
+        val connection = home.credentials()
+        if(kind == "download" && home.jobs().any { it.server == connection?.serverId && it.device == connection?.deviceId && it.kind == kind && it.model == name && !it.terminal }) {
+            _status.value = "This Home download is already saved. Follow it in Work."; return
+        }
         try { home.enqueue(kind, name, "${kind.replaceFirstChar(Char::uppercase)} $name"); refreshHome() }
         catch (e: Exception) { _status.value = e.message ?: "Could not save model operation." }
     }
@@ -145,8 +154,19 @@ class AssistantViewModel(application: Application, private val savedState: andro
     internal fun retryMemoryProcessing() { store.retryMemory(); _stalledMemories.value = 0; resumeMemoryProcessing() }
     internal fun keepMemories() { _memoryUndo.value = emptyList(); prefs.edit().remove("memory_undo").apply() }
     internal fun setResponseMode(mode: ResponseMode) { if (_busy.value) return; _responseMode.value = mode; prefs.edit().putString("response_mode", mode.name).apply() }
-    internal fun assignedModel(mode: ResponseMode): String? = prefs.getString("model_" + mode.name, null)
-    internal fun assignModel(mode: ResponseMode, path: String?) { if(mode == ResponseMode.DEEP) assignHomeDeep(null); prefs.edit().putString("model_" + mode.name, path).apply() }
+    private val _modelAssignments = MutableStateFlow(listOf(ResponseMode.QUICK, ResponseMode.DEEP).associateWith { prefs.getString("model_" + it.name, null) })
+    internal val modelAssignments = _modelAssignments.asStateFlow()
+    internal fun assignedModel(mode: ResponseMode): String? = _modelAssignments.value[mode]
+    internal fun assignModel(mode: ResponseMode, path: String?) {
+        prefs.edit().putString("model_" + mode.name, path).apply()
+        _modelAssignments.update { it + (mode to path) }
+    }
+    internal fun choosePhoneModel(slot: ModelSlot, model: LocalModel) {
+        if (_busy.value || _benchmarking.value != null) return
+        assignModel(if(slot == ModelSlot.PHONE) ResponseMode.QUICK else ResponseMode.DEEP, model.path)
+        if(slot == ModelSlot.PHONE || _selectedModel.value == null) setModel(model.path)
+        _status.value = "${model.name} is your ${slot.title.lowercase()}."
+    }
     internal fun clearPerformance() { LocalPerformance(getApplication()).clear(); _performanceSamples.value = emptyList() }
     internal fun undoMemories() { _memoryUndo.value.forEach(store::deleteMemory); _memoryUndo.value = emptyList(); prefs.edit().remove("memory_undo").apply(); runtime?.invalidate(); refresh() }
     private fun maintain(assistant: AssistantRuntime, chatId: Long) {
@@ -201,6 +221,15 @@ class AssistantViewModel(application: Application, private val savedState: andro
     val repoResults = _repoResults.asStateFlow()
     private val _remoteFiles = MutableStateFlow<List<RemoteModel>>(emptyList())
     val remoteFiles = _remoteFiles.asStateFlow()
+    private val _modelFiles = MutableStateFlow(ModelFilesState())
+    internal val modelFiles = _modelFiles.asStateFlow()
+    private var modelFilesJob: Job? = null
+    private var modelSearchJob: Job? = null
+    private var modelSearchGeneration = 0
+    private val _modelSearchLoading = MutableStateFlow(false)
+    internal val modelSearchLoading = _modelSearchLoading.asStateFlow()
+    private val _modelSearchError = MutableStateFlow("")
+    internal val modelSearchError = _modelSearchError.asStateFlow()
     private val _popularModels = MutableStateFlow<List<PopularGgufModel>>(emptyList())
     val popularModels = _popularModels.asStateFlow()
     private val _popularModelsLoading = MutableStateFlow(false)
@@ -572,7 +601,9 @@ class AssistantViewModel(application: Application, private val savedState: andro
     fun removeModel(model: LocalModel) {
         if (_benchmarking.value != null || _busy.value) return
         if(_selectedModel.value == model.path) { _status.value = "Select another model before deleting this one."; return }
-        library.remove(model); refresh()
+        library.remove(model)
+        _modelAssignments.value.filterValues { it == model.path }.keys.forEach { assignModel(it, null) }
+        refresh()
     }
     fun clearStatus() { _status.value = "" }
 
@@ -798,19 +829,45 @@ class AssistantViewModel(application: Application, private val savedState: andro
     }
 
     fun import(uri: Uri) { viewModelScope.launch { try { val model = library.import(uri); refresh(); setModel(model.path); _status.value = "Model imported." } catch(e: Exception) { _status.value = e.message ?: "Import failed." } } }
-    fun searchRepos(query: String) { viewModelScope.launch { try { _repoResults.value = library.search(query) } catch(e: Exception) { _status.value = e.message ?: "Search failed." } } }
-    fun openRepo(repo: String) { viewModelScope.launch { try { _remoteFiles.value = library.files(repo) } catch(e: Exception) { _status.value = e.message ?: "Could not list files. Gated models require access on Hugging Face and a token." } } }
-    internal fun download(url: String, name: String) {
+    fun searchRepos(query: String) {
+        val generation = ++modelSearchGeneration
+        modelSearchJob?.cancel(); _repoResults.value = emptyList(); _modelSearchError.value = ""; _modelSearchLoading.value = true
+        modelSearchJob = viewModelScope.launch {
+            try { _repoResults.value = library.search(query) }
+            catch(e: CancellationException) { throw e }
+            catch(e: Exception) { _modelSearchError.value = "Could not search Hugging Face. Check your connection and try again." }
+            finally { if(generation == modelSearchGeneration) _modelSearchLoading.value = false }
+        }
+    }
+    internal fun clearModelSearch() {
+        modelSearchGeneration++; modelSearchJob?.cancel()
+        _repoResults.value = emptyList(); _modelSearchError.value = ""; _modelSearchLoading.value = false
+    }
+    fun openRepo(repo: String) {
+        modelFilesJob?.cancel(); _remoteFiles.value = emptyList(); _modelFiles.value = ModelFilesState(repo, loading = true)
+        modelFilesJob = viewModelScope.launch {
+            try { val files = library.files(repo); _remoteFiles.value = files; _modelFiles.value = ModelFilesState(repo, files = files) }
+            catch(e: CancellationException) { throw e }
+            catch(e: Exception) { _modelFiles.value = ModelFilesState(repo, error = "Could not load model files. Try again; gated models need Hugging Face access and a token.") }
+        }
+    }
+    internal fun closeModelFiles() { modelFilesJob?.cancel(); _modelFiles.value = ModelFilesState(); _remoteFiles.value = emptyList() }
+    internal fun download(url: String, name: String, slot: ModelSlot? = null) {
         if(downloadJob?.isActive == true) return
         if (_benchmarking.value != null || _busy.value) { _status.value = "Wait for the current model task to finish before downloading."; return }
-        downloadPrefs.edit().putString("url", url).putString("name", name).apply()
+        val targetSlot = slot ?: downloadPrefs.getString("slot", null)?.takeIf { downloadPrefs.getString("url", null) == url }
+            ?.let { runCatching { ModelSlot.valueOf(it) }.getOrNull() }?.takeIf { it != ModelSlot.HOME }
+        downloadPrefs.edit().putString("url", url).putString("name", name).putString("slot", targetSlot?.name).apply()
         _resumable.value = url to name
         downloadJob = viewModelScope.launch {
             try {
                 val model = library.download(url, name) { _download.value = it }
                 downloadPrefs.edit().clear().apply(); _resumable.value = null
-                refresh(); setModel(model.path)
-                _status.value = "Model downloaded."
+                refresh()
+                if(!_busy.value && _benchmarking.value == null) {
+                    if(targetSlot != null) choosePhoneModel(targetSlot, model) else setModel(model.path)
+                    _status.value = if(targetSlot != null) "Downloaded and selected for ${targetSlot.title.lowercase()}." else "Model downloaded."
+                } else _status.value = "Model downloaded. Choose Use after the current task finishes."
             } catch(e: CancellationException) { _status.value = "Download paused. Start it again to resume." }
             catch(e: Exception) { _download.value = _download.value.copy(running = false, error = e.message ?: "Download failed."); _status.value = e.message ?: "Download failed." }
         }

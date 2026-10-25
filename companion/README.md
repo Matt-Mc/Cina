@@ -76,9 +76,9 @@ Earlier script-based deployments use the same `cina-companion` project and named
 
 ## Use it from Cina
 
-1. Open **Models → Discover** and choose a Home candidate. Start with `qwen3:4b`; try `qwen3:8b` after measuring memory and latency. Downloads run on Home and report layer progress in Work. Other local Ollama model names can be entered; registry URLs and cloud tags are rejected.
-2. In **Models → Installed**, select **Use** for a Home model to send analysis to it. The existing chat model picker also lists Home and Phone models. Home receives the current request, up to six bounded chat excerpts and up to three extracted attachment passages. It does not receive your memory catalogue, tool permissions or connection credentials.
-3. Alternatively choose **Use for Deep** on a Home model, then keep a phone model selected. Auto/Deep sends recognisable read-only analysis to Home when it is reachable. Quick, action requests and work started while Home is unavailable use the phone model. This conservative English-language routing policy is implemented by the app, not by a small model; it intentionally leaves ambiguous requests on the phone. Explicit Home selection always uses Home and queues offline requests for Home.
+1. Open **Models** for three choices: **Phone model**, **Heavy phone model**, and **Home model**. Tap a choice to see its downloaded models and suitable downloads. The two phone choices can use the same model; choosing a heavier phone model does not clear the Home selection.
+2. Open **Home model** to download a server-ready model or search Hugging Face and choose a GGUF file. **Download on Home** saves the request before sending it and downloads the weights on the server. Progress and controls appear in Work. Once installed, tap **Use**. The app checks that Home supports Hugging Face sources; an older companion shows update instructions while its existing local-model downloads continue to work.
+3. **Phone model** and **Heavy phone model** browse Hugging Face for phone-sized files and offer **Download to phone**. Home files are not filtered by the phone's memory. Home currently accepts single GGUF files at the repository root with runner-compatible names up to 80 characters. Split files, projectors and nested Hub files are excluded from Home downloads. Public files work directly; private/gated repositories require access configured on the server, as described in [Hugging Face's Ollama guide](https://huggingface.co/docs/hub/ollama). Phone access tokens are not sent to Home. Auto/Deep sends eligible read-only analysis to the selected Home model when reachable; other requests use the appropriate phone model. Explicit Home selection in the chat picker always uses Home and queues offline requests for it. Home receives the current request, up to six bounded chat excerpts and up to three attachment passages, without the phone's memory catalogue, tool permissions or connection credentials.
 4. Work continues after Cina closes. The result appears in Work and in its original chat after reconciliation. Foreground polling is about five seconds. Android background retries use backoff and a 15-minute periodic catch-up; results/notifications can be delayed by Android. Notifications contain no passage or answer content. Opening Cina reconciles again.
 5. **Pause** waits for the current inference/download request to close before acknowledging **Paused**. **Resume** restarts analysis from the beginning; model downloads reuse completed layers. A crashed server marks running analysis **Interrupted**, requiring explicit Resume. Completed actions are never inferred from partial output. **Pause new work** in Connections leaves the current job running and keeps the control API available.
 
@@ -110,6 +110,14 @@ Disconnect in the app revokes that pairing after server acknowledgement. Accepte
 Back up both named volumes while the stack is stopped. The data volume contains sensitive prompts/results, certificate private key and device hashes; protect it like your other personal data. Restoring it preserves server identity and job IDs. Do not use `docker compose down --volumes` unless intentionally deleting all server data and models. A new data volume creates a new identity and requires pairing again. There is no retention/purge UI in v1.
 
 ### Update
+
+Hugging Face downloads require companion **0.1.1** or later and the current Android app. The app detects this capability automatically. Existing companion deployments keep their identity, paired phone, models and jobs when rebuilt with the same volumes.
+
+In a Compose manager, update the saved Compose file from `main` and rebuild/redeploy the existing stack with its existing project name and volumes. For terminal deployment, download the newer file into the existing directory:
+
+```sh
+curl -fL https://raw.githubusercontent.com/Matt-Mc/Cina/main/companion/compose.yaml -o compose.yaml
+```
 
 Download the newer `compose.yaml` into the same directory (and the newer GPU override if used), then run:
 

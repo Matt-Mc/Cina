@@ -19,7 +19,7 @@ Tap a screenshot to see it full size. See the [full UI gallery](preview/ui-refre
 - **Readable replies.** Assistant replies render headings, bold and italic text, lists, quotes, strikethrough, tables, and code blocks, including while streaming. Code has a Copy button. HTTP/HTTPS links open in your browser when tapped. Raw HTML stays literal text and images show alt text without downloading anything.
 
 - **Chat privately with local models.** Download recommended GGUF models, browse Hugging Face, import a file, or add a direct model URL. Once a model is installed, ordinary chat works offline. Benchmark an installed model to compare speed and a few short task checks on your phone.
-- **Use your own home computer.** Download the [companion Compose file](companion/README.md#deploy-with-docker-compose), start it with Docker Compose, then pair it in Connections. Manage its models and durable analysis jobs in the existing Models and Work screens. Assign a Home model to Deep analysis while keeping everyday and offline work on your phone.
+- **Use your own home computer.** Download the [companion Compose file](companion/README.md#deploy-with-docker-compose), start it with Docker Compose, then pair it in Connections. Choose Phone, Heavy phone and Home models in Models; download Home models from the server catalogue or Hugging Face, and follow durable analysis jobs in Work. Assign a Home model to Deep analysis while keeping everyday and offline work on your phone.
 - **Keep useful things close.** Save and search notes, set reminders, and review suggested memories before they become part of future conversations. An optional You profile lets you share the details Cina should remember about you.
 - **Work with your files.** Attach a text document or a PDF to a chat. Cina indexes selectable text on the device and can cite the relevant file and passage in its answer.
 - **Turn requests into goals.** Start a goal from chat, follow its plan and tool results in Tasks, and return to paused or waiting work. Goals keep their progress across app restarts.
@@ -64,7 +64,7 @@ Existing widgets, shares and notification links still open the relevant detail. 
 
 ## First run
 
-1. Open **Models** and download a recommended model, search a Hugging Face GGUF repository, paste a direct HTTPS GGUF URL, or import a local GGUF file.
+1. Open **Models** and tap **Phone model**, **Heavy phone model**, or **Home model**. Choose an installed model or a suitable download inside that choice. Hugging Face file lists have explicit **Download to phone** or **Download on Home** actions. Phone choices also support direct GGUF links and file imports.
 2. Select an installed model. Chat works without network access after the model is installed.
 3. In a chat, enable **Web** only if you want internet search. Cina searches DuckDuckGo without an API key. You can add a Brave Search API key in **Settings** as a fallback. Gated Hugging Face files require account approval and a token entered in Settings.
 4. Notes, reminders, and scheduled tasks are stored inside Cina. In **Work → Scheduled**, choose a prompt, model, time, and optional daily or weekly repeat. Cina runs the prompt on the phone, can use its local note, reminder, and task tools, and notifies you of the saved result. Calendar, alarm, and share actions open Android system apps for the final user step.

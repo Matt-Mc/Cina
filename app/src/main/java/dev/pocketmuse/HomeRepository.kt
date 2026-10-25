@@ -18,7 +18,8 @@ import java.util.concurrent.TimeUnit
 
 internal data class HomeModel(val name: String, val bytes: Long, val loaded: Boolean)
 internal data class HomeState(val paired: Boolean = false, val online: Boolean = false, val name: String = "Home", val paused: Boolean = false,
-    val models: List<HomeModel> = emptyList(), val catalog: List<String> = emptyList(), val detail: String = "", val selected: String? = null, val deepModel: String? = null)
+    val models: List<HomeModel> = emptyList(), val catalog: List<String> = emptyList(), val detail: String = "", val selected: String? = null, val deepModel: String? = null, val hubModels: Boolean = false,
+    val serverId: String? = null, val deviceId: String? = null)
 internal data class HomeJob(val id: String, val server: String, val device: String, val chat: Long?, val body: JSONObject, val snapshot: JSONObject,
     val submitted: Boolean, val command: String?, val error: String, val delivered: Boolean) {
     val state: String get() = snapshot.optString("state", "waiting")
@@ -37,12 +38,15 @@ internal class HomeRepository(private val context: Context, private val store: L
     fun select(name: String?) { prefs.edit().putString("selected", name).commit() }
     fun assignDeep(name: String?) { prefs.edit().putString("deep_model", name).commit() }
     fun state(): HomeState {
+        val connection = credentials()
         val cache = runCatching { JSONObject(prefs.getString("snapshot", "{}")!!) }.getOrDefault(JSONObject())
         val models = cache.optJSONArray("models") ?: JSONArray()
         val catalog = cache.optJSONArray("catalog") ?: JSONArray()
-        return HomeState(credentials() != null, false, cache.optString("name", "Home"), cache.optBoolean("paused"),
+        return HomeState(connection != null, false, cache.optString("name", "Home"), cache.optBoolean("paused"),
             (0 until models.length()).map { models.getJSONObject(it).let { m -> HomeModel(m.getString("name"), m.optLong("bytes"), m.optBoolean("loaded")) } },
-            (0 until catalog.length()).map { catalog.getString(it) }, prefs.getString("detail", "Last known state")!!, selected(), prefs.getString("deep_model", null))
+            (0 until catalog.length()).map { catalog.getString(it) }, prefs.getString("detail", "Last known state")!!, selected(), prefs.getString("deep_model", null),
+            cache.optJSONArray("model_sources")?.let { sources -> (0 until sources.length()).any { sources.optString(it) == "huggingface" } } ?: false,
+            connection?.serverId, connection?.deviceId)
     }
     suspend fun pair(bundle: String) = withContext(Dispatchers.IO) { mutex.withLock {
         require(credentials() == null) { "Disconnect the existing Home connection first." }
@@ -66,7 +70,8 @@ internal class HomeRepository(private val context: Context, private val store: L
     fun jobs(): List<HomeJob> = jobs(store)
     fun enqueue(kind: String, model: String, title: String, prompt: String = "", chat: Long? = null, userMessage: String? = null): String {
         val credentials = credentials() ?: error("Pair a Home server in Connections first.")
-        require(model.matches(Regex("[A-Za-z0-9][A-Za-z0-9_.-]*(?::[A-Za-z0-9_.-]+)?")) && model.length <= 120 && !model.contains("cloud", ignoreCase = true)) { "Use a local Ollama model name without a registry URL or cloud tag." }
+        require(ModelChoices.validHomeName(model)) { "Use a local model name or a supported Hugging Face GGUF source." }
+        require(!model.startsWith("hf.co/") || state().hubModels) { "Update the Home companion to enable Hugging Face downloads." }
         require(prompt.length <= 24000 && title.isNotBlank()) { "The request is too long or has no title." }
         val id = UUID.randomUUID().toString()
         val body = JSONObject().put("id", id).put("kind", kind).put("model", model).put("title", title.take(160)).put("prompt", prompt)

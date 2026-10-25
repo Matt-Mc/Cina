@@ -2,6 +2,16 @@
 
 Deployment now uses Docker Compose directly; the earlier installer/bootstrap sections below record historical checks. See the latest Compose section for current validation.
 
+## Model choices and Hugging Face on Home — October 24, 2026
+
+The Android Models screen now opens with Phone model, Heavy phone model and Home model. Suitable files, model management and downloads sit inside each choice. Phone and heavy-phone assignments retain their existing saved settings and no longer clear the independent Home model. Repository selection always opens a visible file picker with loading, error/retry and destination-specific download actions. Smaller phone chat models are no longer excluded by the agent-benchmark minimum. Download/resume retains the chosen phone role.
+
+Companion 0.1.1 accepts exact `hf.co/owner/repository:filename.gguf` sources on the fixed Hugging Face host through the pinned Ollama runner. Root single-file GGUFs must fit that runner's 80-character name components; arbitrary URLs, hosts, paths and cloud tags remain rejected. Existing protocol-1 apps retain local-model operation. A `model_sources` capability makes the current app show update instructions for older companions instead of offering unsupported Home Hub downloads.
+
+Local validation: **76 JVM checks**, **119 Android regressions passed with 10 opt-in cases skipped**, and **15 companion contract/recovery checks**. The opt-in HTTPS integration additionally passed real pairing, live public Hub file listing, the Home download button, durable server acknowledgement/completion, model selection and result reconciliation; its inference/download runner is deterministic and does not download the selected weights. Actual app screenshots were reviewed. Linux CI also exercises a real 19 MB public Hugging Face GGUF download through the authenticated Home API and checks installed inventory/digest, followed by the existing Compose retention/removal checks; remote results are recorded after publication.
+
+Evidence: `.tools/models-full-checks.txt`, `models-server-tests.txt`, `models-home-integration.txt` and [model picker screenshots](../preview/models-2026-10-24/README.md). GPU speed, memory limits and model answer quality still require target hardware.
+
 Implemented: deployable CPU/NVIDIA Compose configurations; digest-pinned Python/Ollama images; private model runner; pinned HTTPS pairing and device revocation; model operations; durable digest-pinned analysis; pause/resume/cancel; worker controls; Android reconciliation and notifications in the existing Connections/Models/Chat/Work screens. An optional Home assignment handles recognisable Deep analysis while phone models remain available for everyday/offline requests and actions.
 
 Local checks passed:
