@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.espresso.Espresso.closeSoftKeyboard
+import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -20,6 +21,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.graphics.asAndroidBitmap
 import java.io.File
 import org.junit.Rule
@@ -84,16 +86,31 @@ class NavigationTest {
         }
         capture("consolidated-menu.png")
         compose.onNodeWithText("Library").performClick()
+        awaitLibraryReady()
         listOf("Inbox", "Notes", "Knowledge & projects", "Memory").forEach {
             compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText(it))
-            compose.onNodeWithText(it).assertIsDisplayed()
+            try {
+                compose.onNodeWithText(it).performScrollTo().assertIsDisplayed()
+            } catch (failure: AssertionError) {
+                throw AssertionError("Library destination '$it' is not visible. UI=${compose.onRoot().printToString()}", failure)
+            }
         }
         capture("consolidated-library.png")
         compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText("Manage notes"))
         compose.onNodeWithText("Manage notes").performClick()
         compose.onNodeWithContentDescription("Go back").performClick()
+        awaitLibraryReady()
         compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText("Knowledge & projects"))
         compose.onNodeWithText("Knowledge & projects").assertIsDisplayed()
+    }
+
+    private fun awaitLibraryReady() {
+        compose.onNodeWithContentDescription("Saved library items").assertExists()
+        lateinit var library: LibraryViewModel
+        compose.runOnIdle { library = ViewModelProvider(compose.activity)[LibraryViewModel::class.java] }
+        // Loading can insert rows above Browse and move a target immediately after scrolling.
+        compose.waitUntil(10_000) { !library.loading.value }
+        compose.waitForIdle()
     }
 
     @Test fun openingModelManagementPreservesChatDraftAndUsesCompactActions() {
