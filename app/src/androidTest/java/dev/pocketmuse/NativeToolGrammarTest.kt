@@ -41,6 +41,8 @@ class NativeToolGrammarTest {
                 assertEquals("create_note", action.getString("name"))
                 ToolCatalog.get(action.getString("name"))!!.validate(action.getJSONObject("arguments"))
                 engine.resetSystemPrompt("Reply to greetings with a short greeting. Do not call tools.")
+                engine.setToolSchema(noteSchema.toString(), force = true)
+                engine.setToolSchema("")
                 val greeting = StringBuilder()
                 withTimeout(30_000) { engine.sendUserPrompt("Hello", 32).collect { greeting.append(it) } }
                 assertTrue(greeting.isNotBlank())

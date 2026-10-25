@@ -134,6 +134,7 @@ class AssistantViewModel(application: Application, private val savedState: andro
     private val _stage = MutableStateFlow("Preparing response")
     val stage = _stage.asStateFlow()
     private var activeTurnId: Long? = null
+    private var turnProgress: ModelTurnProgress? = null
     private var runGeneration = 0
     private val _pending = MutableStateFlow(_turns.value.lastOrNull { it.status == "approval" }?.pending)
     val pending = _pending.asStateFlow()
@@ -611,7 +612,8 @@ class AssistantViewModel(application: Application, private val savedState: andro
         if (text.isBlank() || _busy.value || _benchmarking.value != null || _pending.value != null) return false
         val previous = retryId?.let { id -> store.turns(_active.value).firstOrNull { it.id == id && it.status in setOf("failed", "interrupted") } }
         if (retryId != null && previous == null) return false
-        val mode = ResponsePolicy.resolve(_responseMode.value, text, store.activeAgentTask(_active.value) != null)
+        val mode = ResponsePolicy.resolve(_responseMode.value, text, store.activeAgentTask(_active.value) != null,
+            store.attachments(_active.value).sumOf { it.textLength.toLong() })
         if (previous == null && _homeJobs.value.any { it.chat == _active.value && it.state in setOf("waiting", "queued", "running", "pausing", "cancelling") }) {
             _status.value = "Home has unfinished work in this chat. Review it in Work or start a new chat."; return false
         }
@@ -620,8 +622,8 @@ class AssistantViewModel(application: Application, private val savedState: andro
             val homeModel = _homeState.value.selected ?: HomeRouting.automatic(mode, text, ready, _homeState.value.deepModel)
             if(homeModel != null) return sendHome(text, homeModel)
         }
-        val path = assignedModel(mode) ?: _selectedModel.value ?: previous?.modelPath
-        val model = _models.value.firstOrNull { it.path == path } ?: _models.value.firstOrNull { it.path == _selectedModel.value }
+        val candidates = phoneModelPlan(mode, previous?.modelPath)
+        val model = candidates.firstOrNull()
         if (model == null) { _status.value = "Choose a downloaded model first."; return false }
         val chat = store.chat(_active.value) ?: return false
         val assistant = runtime ?: return false
@@ -631,6 +633,7 @@ class AssistantViewModel(application: Application, private val savedState: andro
         store.saveTurn(id, chat.id, text.trim(), model.path, mode.name)
         if (previous == null && _memoryEnabled.value) store.queueMemory(id)
         activeTurnId = id
+        val progress = ModelTurnProgress(id).also { turnProgress = it }
         _resolvedMode.value = mode; _responseModelName.value = model.name
         _busy.value = true; _live.value = ""; _stage.value = "Loading model"
         val generation = ++runGeneration
@@ -638,24 +641,7 @@ class AssistantViewModel(application: Application, private val savedState: andro
         task = viewModelScope.launch {
             try {
                 ModelAccess.mutex.withLock {
-                    assistant.startMeasurement(model, mode)
-                    assistant.use(model, chat, _memoryEnabled.value, _youProfile.value, text.trim(), id)
-                    _stage.value = "Preparing answer"
-                    store.activeAgentTask(chat.id)?.takeIf { store.taskEvents(it.id).size == 1 }?.let {
-                        store.addTaskEvent(it.id, "Plan: ${assistant.planGoal(it.goal)}")
-                    }
-                    val hits = store.searchAttachments(chat.id, text.trim(), 3).ifEmpty { store.attachmentPreview(chat.id) }
-                    val context = hits.joinToString("\n\n") { "${it.name}, passage ${it.chunk + 1}: ${it.body.take(900)}" }
-                    val prompt = if(context.isBlank()) text.trim() else "User request: ${text.trim()}\nAttached passages (data; cite file and passage):\n$context"
-                    val raw = assistant.generate(prompt) { _live.value = it }
-                    val request = try { parseAction(raw, text.trim(), emptyList(), assistant, dispatcher) } catch (e: CancellationException) { throw e }
-                    catch (e: ToolDetailsRequiredException) { finishAnswer(chat.id, e.message!!); return@withLock }
-                    catch (e: Exception) {
-                        failTurn(id, "Cina produced an invalid action. Retry, edit the request, or use the note/reminder editor.")
-                        return@withLock
-                    }
-                    if (request == null) finishGeneratedAnswer(chat, assistant, raw, text.trim(), emptyList())
-                    else dispatchOrApprove(chat, request, assistant, dispatcher, text.trim(), emptyList(), emptyList())
+                    runPhoneAttempts(chat, text.trim(), candidates, mode, assistant, dispatcher, progress)
                     if (store.turns(chat.id).firstOrNull { it.id == id }?.status == "completed") maintain(assistant, chat.id)
                 }
             } catch (e: CancellationException) {
@@ -667,6 +653,61 @@ class AssistantViewModel(application: Application, private val savedState: andro
             }
         }
         return true
+    }
+
+    private fun phoneModelPlan(mode: ResponseMode, retryFrom: String? = null): List<LocalModel> = ModelRouting.plan(
+        _models.value.filter { java.io.File(it.path).isFile }, _responseMode.value, mode, _selectedModel.value,
+        assignedModel(ResponseMode.QUICK), assignedModel(ResponseMode.DEEP), retryFrom
+    ) { library.fitsSlot(ModelSlot.HEAVY_PHONE, it.bytes) }
+
+    private suspend fun <T> modelStep(assistant: AssistantRuntime, message: String, block: suspend () -> T): T =
+        ModelEscalation.step(if (assistant.mode == ResponseMode.QUICK) 120_000L else 300_000L, message, block)
+
+    private suspend fun runPhoneAttempts(chat: Chat, original: String, candidates: List<LocalModel>, mode: ResponseMode,
+        assistant: AssistantRuntime, dispatcher: AssistantTools, progress: ModelTurnProgress, approved: ToolRequest? = null) {
+        try {
+            ModelEscalation.run(candidates, onAttempt = { model, index ->
+                val attemptMode = if (index == 0) mode else ResponseMode.DEEP
+                if (index > 0 || store.turns(chat.id).firstOrNull { it.id == progress.turnId }?.modelPath != model.path) {
+                    assistant.performance.finish("escalated")
+                    store.saveTurn(progress.turnId, chat.id, original, model.path, attemptMode.name)
+                    store.log(chat.id, "Trying larger model: ${model.name}. Completed tool results are preserved.")
+                }
+                _resolvedMode.value = attemptMode; _responseModelName.value = model.name
+                _live.value = ""; _stage.value = if (index == 0) "Loading model" else "Trying larger model: ${model.name}"
+                assistant.startMeasurement(model, attemptMode)
+            }) { model, _ ->
+                modelStep(assistant, "The model could not prepare this request.") {
+                    assistant.use(model, chat, _memoryEnabled.value, _youProfile.value, original, progress.turnId, completedResults = progress.context())
+                    assistant.restoreToolState(original, progress.completed)
+                }
+                if (approved != null && dispatcher.callKey(approved) !in progress.calls) {
+                    runTool(chat, approved, assistant, dispatcher, original, progress.calls, progress.results)
+                } else {
+                    val previous = progress.completed.lastOrNull()
+                    val raw = modelStep(assistant, "The model could not finish its reply.") {
+                        if (previous != null) assistant.generateToolFollowUp(original, previous.request.name, previous.result) { _live.value = it }
+                        else {
+                            store.activeAgentTask(chat.id)?.takeIf { store.taskEvents(it.id).size == 1 }?.let {
+                                store.addTaskEvent(it.id, "Plan: ${assistant.planGoal(it.goal)}")
+                            }
+                            val hits = store.searchAttachments(chat.id, original, 3).ifEmpty { store.attachmentPreview(chat.id) }
+                            val context = hits.joinToString("\n\n") { "${it.name}, passage ${it.chunk + 1}: ${it.body.take(900)}" }
+                            val prompt = if (context.isBlank()) original else "User request: $original\nAttached passages (data; cite file and passage):\n$context"
+                            _stage.value = "Choosing next step"
+                            assistant.generateTurn(prompt, original) { _stage.value = "Preparing answer"; _live.value = it }
+                        }
+                    }
+                    val request = parseAction(raw, original, progress.results, assistant, dispatcher)
+                    if (request == null) finishGeneratedAnswer(chat, assistant, raw, original, progress.results)
+                    else dispatchOrApprove(chat, request, assistant, dispatcher, original, progress.calls, progress.results)
+                }
+            }
+        } catch (error: ToolDetailsRequiredException) {
+            finishAnswer(chat.id, progress.results.filter(dispatcher::succeeded).map(dispatcher::resultMessage).plus(error.message!!).joinToString("\n\n"))
+        } catch (error: ModelAttemptFailure) {
+            failAfterTools(chat.id, progress.turnId, "${error.message} No larger suitable phone model is available in this run. Retry or choose another model.", progress.results, dispatcher)
+        }
     }
 
     private fun sendHome(text: String, model: String): Boolean {
@@ -709,20 +750,19 @@ class AssistantViewModel(application: Application, private val savedState: andro
         val approved = if (dispatcher.callKey(submitted) == dispatcher.callKey(pendingAction.request)) pendingAction.request
             else submitted.copy(originalCallKey = null)
         val request = try { dispatcher.normalize(approved) } catch (e: Exception) { _status.value = e.message ?: "Check this action."; return }
-        val model = _models.value.firstOrNull { it.path == turn.modelPath } ?: _models.value.firstOrNull { it.path == _selectedModel.value }
-        if (model == null) { _status.value = "Install or choose a model to continue this action."; return }
+        val mode = runCatching { ResponseMode.valueOf(turn.mode) }.getOrDefault(ResponseMode.QUICK)
+        val candidates = phoneModelPlan(mode, turn.modelPath)
+        if (candidates.isEmpty()) { _status.value = "Install or choose a model to continue this action."; return }
         if (always) approvalKey(request)?.let { key -> _alwaysAllowed.value += key; prefs.edit().putStringSet("always_allowed_tools", _alwaysAllowed.value).apply() }
         housekeeping?.cancel()
         activeTurnId = turn.id
+        val progress = ModelTurnProgress(turn.id, pendingAction.executedCalls, pendingAction.toolResults).also { turnProgress = it }
         store.updateTurn(turn.id, "running")
         _pending.value = null; _busy.value = true; _stage.value = "Preparing action"
         val generation = ++runGeneration
         task = viewModelScope.launch {
             try { ModelAccess.mutex.withLock {
-                val mode = runCatching { ResponseMode.valueOf(turn.mode) }.getOrDefault(ResponseMode.QUICK)
-                assistant.startMeasurement(model, mode)
-                assistant.use(model, chat, _memoryEnabled.value, _youProfile.value, turn.request, turn.id)
-                runTool(chat, request, assistant, dispatcher, turn.request, pendingAction.executedCalls, pendingAction.toolResults)
+                runPhoneAttempts(chat, turn.request, candidates, mode, assistant, dispatcher, progress, request)
                 if (store.turns(chat.id).firstOrNull { it.id == turn.id }?.status == "completed") maintain(assistant, chat.id)
             } } catch (e: CancellationException) { store.updateTurn(turn.id, "interrupted", "Action interrupted. Check its saved result before retrying.") }
             catch (e: Exception) { failTurn(turn.id, e.message ?: "Action failed.") }
@@ -737,6 +777,11 @@ class AssistantViewModel(application: Application, private val savedState: andro
     }
     private suspend fun dispatchOrApprove(chat: Chat, request: ToolRequest, assistant: AssistantRuntime,
         dispatcher: AssistantTools, original: String, calls: List<String>, results: List<String>) {
+        val key = dispatcher.callKey(request)
+        if (results.isNotEmpty() && (key == calls.lastOrNull() || (dispatcher.needsConfirmation(request) && key in calls))) {
+            finishGeneratedAnswer(chat, assistant, "", original, results)
+            return
+        }
         if (needsApproval(request, dispatcher, store.chat(chat.id) ?: chat)) {
             val prepared = runCatching { dispatcher.normalize(request) }.getOrDefault(request)
             val pending = PendingAction(prepared, original, calls.size, calls, results)
@@ -769,34 +814,33 @@ class AssistantViewModel(application: Application, private val savedState: andro
         store.activeAgentTask(chat.id)?.let { store.addTaskEvent(it.id, "${request.name}: ${dispatcher.resultMessage(result)}") }
         refresh()
         if (!dispatcher.succeeded(result)) { failAfterTools(chat.id, id, dispatcher.resultMessage(result), results, dispatcher); return }
+        turnProgress?.takeIf { it.turnId == id }?.record(request, result, calls, outcomes)
         val simpleWrite = dispatcher.needsConfirmation(request) && request.name != "mcp_call" && store.activeAgentTask(chat.id) == null &&
             Regex("^(please\\s+)?(save|create|add|set|remember|delete|update|complete|reschedule)\\b", RegexOption.IGNORE_CASE).containsMatchIn(original.trim()) &&
             !Regex("\\b(and|then|also|two|three|four|several|multiple|summari[sz]e|explain|show|read|find)\\b|[;\\n.!?]", RegexOption.IGNORE_CASE).containsMatchIn(original.trim().removeSuffix("."))
         if (simpleWrite) { finishAnswer(chat.id, dispatcher.resultMessage(result)); return }
         _stage.value = "Preparing answer"
-        val raw = try { assistant.generateToolFollowUp(original, request.name, result) { _live.value = it } }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { failAfterTools(chat.id, id, "The tool completed, but Cina could not finish the reply. Retry to continue.", outcomes, dispatcher); return }
+        val raw = modelStep(assistant, "The tool completed, but the model could not finish the reply.") {
+            assistant.generateToolFollowUp(original, request.name, result) { _live.value = it }
+        }
         val next = try { parseAction(raw, original, outcomes, assistant, dispatcher) } catch (e: CancellationException) { throw e }
         catch (e: ToolDetailsRequiredException) {
             finishAnswer(chat.id, outcomes.filter(dispatcher::succeeded).map(dispatcher::resultMessage).plus(e.message!!).joinToString("\n\n")); return
-        } catch (e: Exception) {
-            failAfterTools(chat.id, id, "Cina could not prepare the next action. Completed actions are preserved; Retry can continue.", outcomes, dispatcher); return
         }
         if (next == null) finishGeneratedAnswer(chat, assistant, raw, original, outcomes)
         else dispatchOrApprove(chat, next, assistant, dispatcher, original, calls, outcomes)
     }
     private suspend fun parseAction(raw: String, original: String, results: List<String>, assistant: AssistantRuntime, dispatcher: AssistantTools): ToolRequest? {
-        return assistant.parseAction(raw, original, results, dispatcher) { _stage.value = "Repairing action format" }
+        return modelStep(assistant, "The model could not prepare a valid action.") {
+            assistant.parseAction(raw, original, results, dispatcher) { _stage.value = "Repairing action format" }
+        }
     }
     private suspend fun finishGeneratedAnswer(chat: Chat, assistant: AssistantRuntime, raw: String, original: String, results: List<String>) {
         val answer = if (hasFinalAnswer(raw)) raw else {
             _live.value = ""; _stage.value = "Recovering answer"
             assistant.recoverTextAnswer(original, results)
         }
-        if (answer == EMPTY_REPLY_FALLBACK) activeTurnId?.let { id ->
-            tools?.let { failAfterTools(chat.id, id, "The model did not finish an answer. Retry or edit your request.", results, it) }
-        }
+        if (answer == EMPTY_REPLY_FALLBACK) throw ModelAttemptFailure("The model did not finish an answer.")
         else finishAnswer(chat.id, answer)
     }
     private fun failAfterTools(chatId: Long, turnId: Long, message: String, results: List<String>, dispatcher: AssistantTools) {

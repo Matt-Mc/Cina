@@ -53,6 +53,11 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_configureToolSchema(JNIEnv *env
     if (!raw) return false;
     const std::string value(raw);
     env->ReleaseStringUTFChars(schema, raw);
+    if (value.empty()) {
+        g_action_grammar.clear();
+        g_force_action = false;
+        return true;
+    }
     try {
         const auto grammar = json_schema_to_grammar(common_json::parse(value));
         g_action_grammar = "root ::= \"[tool]\" action-root \"[/tool]\"\n" +

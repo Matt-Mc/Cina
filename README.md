@@ -78,6 +78,8 @@ Long-press the Android home screen, open **Widgets**, and find **Cina**. **Quick
 
 Auto is the default, with Quick and Deep overrides in chat. Assign local models for each mode in Settings → Responses, or use the same model for both. Quick disables thinking when the model template supports that control. Settings → Responses → Response timings shows local measurements for the last 30 runs without recording message content. See [response modes, memory processing, and the Fold 7 validation protocol](docs/local-response-performance.md).
 
+Auto routes substantial or multi-step requests and large attachments to Deep. Without model assignments, it chooses the smallest suitable installed phone model for Quick and the largest for Deep. A detected model failure can move the same chat turn to the next larger suitable installed model, up to three attempts, carrying completed tool results and approvals forward. No additional models are downloaded. Missing details, denied approval, connection failures, and memory allocation failures do not trigger escalation. Scheduled prompts keep their selected model; Home keeps its separate analysis path. See [routing, escalation, and validation scope](docs/model-routing-and-escalation-2026-10-25.md).
+
 ## Goals, files, memory, and model benchmarks
 
 - Choose **Work → Goals → New goal**, or type a request in chat, tap **+**, and choose **Track as goal** to track it in **Work → Goals**. Cina saves tool results and approval checkpoints with the goal. You can return to a paused or waiting goal, follow up, or mark it complete. Goal execution runs while the chat is active; closing the app preserves progress but does not keep that goal running in the background. Scheduled tasks remain a separate feature.
