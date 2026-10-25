@@ -111,6 +111,21 @@ class InboxViewModel(application: Application, private val savedState: SavedStat
             finally { _busy.value = false }
         }
     }
+    fun acceptForOutcome(proposal: IntakeProposal, onAccepted: (IntakeProposal)->Unit) {
+        if(_busy.value) return
+        _busy.value=true
+        viewModelScope.launch {
+            try {
+                val accepted=repository { repo ->
+                    if(proposal.state!="accepted") repo.updateProposal(proposal.intakeId,proposal.id,proposal.revision,proposal.suggestion.text,"accepted")
+                    repo.review(proposal.intakeId)?.proposals?.singleOrNull { it.id==proposal.id && it.state=="accepted" }
+                } ?: error("Reopen the suggestion and try again.")
+                _detail.value?.item?.let(::open);refresh();onAccepted(accepted)
+            } catch(e: CancellationException) { throw e }
+            catch(e: Exception) { _message.value=e.message ?: "Could not keep this suggestion." }
+            finally { _busy.value=false }
+        }
+    }
     fun delete(id: String) {
         if (_busy.value) return
         _busy.value = true

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -33,6 +34,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -167,19 +169,39 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
     var modelReturnPage by rememberSaveable { mutableStateOf("Settings") }
     var companionReturnPage by rememberSaveable { mutableStateOf("Settings") }
     var taskTab by rememberSaveable { mutableIntStateOf(4) }
+    var workEntry by rememberSaveable { mutableIntStateOf(0) }
     var librarySource by rememberSaveable { mutableStateOf<String?>(null) }
+    var inboxEntry by rememberSaveable { mutableIntStateOf(0) }
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     var modelSlot by rememberSaveable { mutableStateOf<String?>(null) }
+    var history by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var focusKind by rememberSaveable { mutableStateOf<String?>(null) }
+    var focusId by rememberSaveable { mutableStateOf<String?>(null) }
+    var sourceReturn by rememberSaveable { mutableStateOf(false) }
+    var setupModel by rememberSaveable { mutableStateOf(false) }
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    fun navigate(target: String) {
+        if(page != target) { history = history + page; page = target }
+    }
+    fun rootPage(target: String) { history = emptyList(); focusId=null; focusKind=null; sourceReturn=false; if(target=="Tasks") { taskTab=4;workEntry++ }; page=target }
+    val durable: DurableWorkViewModel = viewModel()
+    val localWork by durable.tasks.collectAsState()
+    val goals by vm.agentTasks.collectAsState()
+    val schedules by vm.scheduledTasks.collectAsState()
+    val homeJobs by vm.homeJobs.collectAsState()
+    LaunchedEffect(page) { vm.refresh();durable.refresh() }
+    val workCount = localWork.count { it.state in setOf("waiting_for_approval","waiting_for_input") } + goals.count { it.status=="waiting" } + schedules.count { !it.lastError.isNullOrBlank() } + homeJobs.count { it.state in setOf("failed","interrupted") || it.error.isNotBlank() }
     val pageState = rememberSaveableStateHolder()
     val status by vm.status.collectAsState()
     val pending by vm.pending.collectAsState()
     val profile by vm.youProfile.collectAsState()
     val suggestions by vm.memorySuggestions.collectAsState()
     LaunchedEffect(scheduledTaskOpenRequest) {
-        if (scheduledTaskOpenRequest > 0) { page = "Tasks"; taskTab = 2 }
+        if (scheduledTaskOpenRequest > 0) { workEntry++;page = "Tasks"; taskTab = 2 }
     }
     LaunchedEffect(widgetPageRequest?.first) {
         widgetPageRequest?.let {
+            if(it.second in setOf("Scheduled tasks","Reminders","Actions","Work")) workEntry++
             when (it.second) {
                 "Scheduled tasks" -> { page = "Tasks"; taskTab = 2 }
                 "Reminders" -> { page = "Tasks"; taskTab = 1 }
@@ -190,13 +212,11 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
         }
     }
     fun back() {
-        page = when (page) {
-            "Models" -> if(modelSlot != null) { modelSlot = null; "Models" } else modelReturnPage
-            "Companion" -> companionReturnPage
-            "Connections", "Skills", "Chat preferences", "About", "Response settings" -> "Settings"
-            "Edit profile" -> "You"
-            "Inbox", "Notes", "Knowledge", "Memory", "Library storage" -> "Library"
-            "You" -> "Settings"
+        if(page=="Models" && modelSlot!=null) { modelSlot=null; return }
+        if(history.isNotEmpty()) { page=history.last(); history=history.dropLast(1) }
+        else page=when(page) {
+            "Inbox","Notes","Knowledge","Memory" -> "Library"
+            "Connections","Skills","Chat preferences","About","Response settings","You","Library storage","Companion" -> "Settings"
             else -> "Chat"
         }
     }
@@ -205,7 +225,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
             if (page != "Chat") {
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RoundControl("‹", "Go back") { back() }
+                    RoundControl("‹", "Go back") { backDispatcher?.onBackPressed() }
                     Spacer(Modifier.width(12.dp))
                     Text("cina", fontFamily = FontFamily.Serif, fontSize = 26.sp, color = Ink)
                     Spacer(Modifier.weight(1f))
@@ -224,29 +244,39 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                 pageState.SaveableStateProvider(destination) {
                     when (destination) {
                         "Chat" -> ChatScreen(vm,
-                            onModels = { modelReturnPage = "Chat"; modelSlot = null; page = "Models" },
-                            onMenu = { menuOpen = true }, onCompanion = { companionReturnPage = "Chat"; page = "Companion" },
+                            onModels = { modelReturnPage = "Chat"; modelSlot = null; setupModel=vm.models.value.isEmpty(); navigate("Models") },
+                            onMenu = { menuOpen = true }, onWork = { id -> focusKind="home"; focusId=id; navigate("Tasks") },
                             widgetDraft = widgetDraft, widgetDraftKey = widgetDraftKey)
-                        "Tasks" -> TasksScreen(vm, taskTab, { taskTab = it }, onOpenChat = { page = "Chat" }, onOpenResult = { kind -> vm.refresh();if(kind=="note") page="Notes" else taskTab=1 })
-                        "Library" -> LibraryScreen(vm) { page = it }
-                        "Inbox" -> if (BuildConfig.INBOX_ENABLED) InboxScreen(sourceId = librarySource, onSourceOpened = { librarySource = null })
-                        "Notes" -> NotesScreen(vm)
-                        "Knowledge" -> if (BuildConfig.INBOX_ENABLED) ContextLibraryScreen(viewModel(), onBack = { page = "Library" }, onOpenSource = { id -> librarySource = id; page = "Inbox" }, backLabel = "Back to Library")
-                        "Memory" -> Page("Memory", "The personal details you choose to keep.") { MemoryContent(vm, onOpenChat = { page = "Chat" }) }
-                        "Library storage" -> if (BuildConfig.INBOX_ENABLED) LibraryStorageScreen(onBack = { page = "Library" })
-                        "You" -> YouScreen(vm, onEditProfile = { page = "Edit profile" }, onOpenChat = { page = "Chat" })
-                        "Edit profile" -> ProfileEditor(profile, onSave = { vm.saveYouProfile(it); page = "You" })
-                        "Models" -> ModelsScreen(vm, modelSlot?.let { ModelSlot.valueOf(it) }, { modelSlot = it?.name }, onConnectHome = { page = "Connections" })
+                        "Tasks" -> TasksScreen(vm, taskTab, { taskTab = it }, onOpenChat = { navigate("Chat") },
+                            onOpenResult = { kind,id -> vm.refresh(); focusKind=kind; focusId=id.toString(); if(kind=="note") navigate("Notes") else taskTab=1 },
+                            openKind=focusKind?.takeIf { page=="Tasks" },openId=focusId?.takeIf { page=="Tasks" },onConsumed={ focusKind=null;focusId=null },entryKey=workEntry)
+                        "Library" -> LibraryScreen(vm,onOpen={ kind,id ->
+                            focusKind=kind;focusId=id
+                            when(kind) {
+                                "source" -> { librarySource=id;sourceReturn=true;navigate("Inbox") }
+                                "note" -> navigate("Notes")
+                                "memory" -> navigate("Memory")
+                                else -> navigate("Knowledge")
+                            }
+                        }) { target -> focusId=null;focusKind=null;sourceReturn=false;if(target=="Inbox") inboxEntry++;navigate(target) }
+                        "Inbox" -> if (BuildConfig.INBOX_ENABLED) InboxScreen(sourceId = librarySource, onSourceOpened = { librarySource = null }, returnToOrigin=sourceReturn, onLeaveSource={ sourceReturn=false;back() },captureRequest=inboxEntry)
+                        "Notes" -> NotesScreen(vm,openId=focusId?.takeIf { page=="Notes" }?.toLongOrNull(),startNew=page=="Notes" && focusId=="new",onOpened={ focusId=null })
+                        "Knowledge" -> if (BuildConfig.INBOX_ENABLED) ContextLibraryScreen(viewModel(), onBack = { back() }, onOpenSource = { id -> librarySource = id;sourceReturn=true;navigate("Inbox") }, backLabel = "Back to Library", selectedId=focusId, selectionKind=focusKind)
+                        "Memory" -> Page("Memory", "The personal details you choose to keep.") { MemoryContent(vm, onOpenChat = { navigate("Chat") },focusId=focusId?.toLongOrNull()) }
+                        "Library storage" -> if (BuildConfig.INBOX_ENABLED) LibraryStorageScreen(onBack = { back() })
+                        "You" -> YouScreen(vm, onEditProfile = { navigate("Edit profile") }, onMemory={ focusId=null;navigate("Memory") })
+                        "Edit profile" -> ProfileEditor(profile, onSave = { vm.saveYouProfile(it); back() })
+                        "Models" -> ModelsScreen(vm, modelSlot?.let { ModelSlot.valueOf(it) }, { modelSlot = it?.name }, onConnectHome = { navigate("Connections") }, setup=setupModel, onReady={ setupModel=false;modelSlot=null;back() })
                         "Skills" -> SkillsScreen(vm)
                         "Connections" -> ConnectionsScreen(vm)
                         "Companion" -> Page("Appearance", "Make Cina your own.") { CompanionSettings(profile, vm::saveCompanionSettings) }
-                        "Response settings" -> Page("Responses", "Choose speed and level of detail.") { ResponseSettings(vm, onModels = { modelReturnPage = "Response settings"; modelSlot = null; page = "Models" }) }
+                        "Response settings" -> Page("Responses", "Choose speed and level of detail.") { ResponseSettings(vm, onModels = { modelReturnPage = "Response settings"; modelSlot = null;setupModel=false; navigate("Models") }) }
                         "Chat preferences" -> ChatPreferencesScreen(vm)
                         "About" -> AboutScreen(updateStatus, onCheckUpdates)
                         else -> SettingsScreen(vm, onNavigate = {
                             if (it == "Models") { modelReturnPage = "Settings"; modelSlot = null }
                             if (it == "Companion") companionReturnPage = "Settings"
-                            page = it
+                            setupModel=false; navigate(it)
                         })
                     }
                 }
@@ -267,12 +297,13 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                         val destination = if (label == "Work") "Tasks" else label
                         val selected = page == destination || destination == "Library" && page in setOf("Inbox", "Notes", "Knowledge", "Memory", "Library storage")
                         Row(Modifier.fillMaxWidth().background(if (selected) Soft else Color.Transparent, RoundedCornerShape(16.dp))
-                            .clickable { page = destination; menuOpen = false }.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            .clickable { rootPage(destination); menuOpen = false }.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(label, fontSize = 19.sp, color = if (selected) Accent else Ink, fontWeight = FontWeight.Medium)
                                 Text(detail, color = Muted, fontSize = 11.sp)
                             }
                             if (destination == "Library" && suggestions.isNotEmpty()) Text("${suggestions.size}", color = Accent)
+                            if (destination == "Tasks" && workCount>0) Text("$workCount",color=Accent,modifier=Modifier.semantics { contentDescription="$workCount items need your attention" })
                         }
                         Spacer(Modifier.height(6.dp))
                     }
@@ -292,14 +323,14 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
 
 @Composable
 internal fun RoundControl(symbol: String, description: String, onClick: () -> Unit) {
-    Surface(shape = CircleShape, color = Soft, modifier = Modifier.size(48.dp).semantics { contentDescription = description }.clickable(onClickLabel = description, onClick = onClick)) {
-        Box(contentAlignment = Alignment.Center) { Text(symbol, fontSize = 23.sp, color = Ink) }
+    Surface(shape = CircleShape, color = Soft, modifier = Modifier.size(48.dp).semantics { contentDescription = description }.clickable(role=androidx.compose.ui.semantics.Role.Button,onClickLabel = description, onClick = onClick)) {
+        Box(contentAlignment = Alignment.Center) { CinaIcon(symbol,Modifier.size(24.dp)) }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () -> Unit, onCompanion: () -> Unit,
+private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () -> Unit, onWork: (String) -> Unit,
     widgetDraft: String?, widgetDraftKey: Int) {
     val chats by vm.chats.collectAsState(); val active by vm.active.collectAsState(); val messages by vm.messages.collectAsState()
     val live by vm.live.collectAsState(); val busy by vm.busy.collectAsState(); val logs by vm.logs.collectAsState()
@@ -333,8 +364,17 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
     val canSend = modelName != null && !busy && benchmarking == null && pending == null
     val hasActiveGoal = tasks.any { it.chatId == active && it.status in listOf("active", "waiting") }
     val listState = rememberLazyListState()
-    LaunchedEffect(messages.size, busy) {
-        if (messages.isNotEmpty() || busy) listState.animateScrollToItem(if (busy) messages.size else (messages.size - 1).coerceAtLeast(0))
+    val chatScope = rememberCoroutineScope()
+    var followReplies by remember(active) { mutableStateOf(true) }
+    var unreadReply by remember(active) { mutableStateOf(false) }
+    var seenCount by remember(active) { mutableIntStateOf(messages.size) }
+    val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
+    val dragging by listState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(dragging) { if(dragging) followReplies=false }
+    LaunchedEffect(messages.size, busy, live.length / 80) {
+        if(!followReplies && (messages.size>seenCount || busy && live.isNotBlank())) unreadReply=true
+        seenCount=messages.size
+        if (followReplies && (messages.isNotEmpty() || busy)) listState.scrollToItem(messages.size + if(busy) 1 else 0)
     }
     Column(Modifier.fillMaxSize()) {
         val responseMode by vm.responseMode.collectAsState()
@@ -350,12 +390,11 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
             RoundControl("☰", "Open menu", onMenu)
             Spacer(Modifier.width(12.dp))
             if (profile.showPet) {
-                CompanionBubble(profile, 40.dp, Modifier.clickable(onClickLabel = "Customize companion", onClick = onCompanion))
+                CompanionBubble(profile, 28.dp)
                 Spacer(Modifier.width(8.dp))
             }
             Column(Modifier.weight(1f).clickable(onClickLabel = "Open conversations") { showChats = true }) {
-                Text("cina", fontFamily = FontFamily.Serif, fontSize = 27.sp, color = Ink)
-                Text("${chat?.title ?: "New chat"} ⌄", color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${chat?.title ?: "New chat"} ⌄",fontFamily=FontFamily.Serif,fontSize=23.sp,color=Ink,maxLines=2,overflow=TextOverflow.Ellipsis)
             }
             Spacer(Modifier.width(8.dp))
             RoundControl("＋", "New chat") { vm.newChat() }
@@ -372,35 +411,39 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { showModels = true }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp), modifier = Modifier.weight(1f).semantics { contentDescription = "Choose model" }) {
-                Text("${modelName ?: "Choose a model"} ⌄", color = Accent, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+        Row(Modifier.fillMaxWidth().padding(horizontal=20.dp),verticalAlignment=Alignment.CenterVertically) {
+            var responseOptions by remember { mutableStateOf(false) }
             Box {
-                var modes by remember { mutableStateOf(false) }
-                TextButton(onClick = { modes = true }) { Text(responseMode.name.lowercase().replaceFirstChar { it.uppercase() }) }
-                DropdownMenu(modes, onDismissRequest = { modes = false }) {
-                    ResponseMode.entries.forEach { mode -> DropdownMenuItem(text = { Text(when(mode) { ResponseMode.AUTO -> "Auto · chooses for this request"; ResponseMode.QUICK -> "Quick · everyday questions"; ResponseMode.DEEP -> "Deep · complex work" }) }, onClick = { vm.setResponseMode(mode); modes = false }) }
+                TextButton(onClick={ responseOptions=true }) { Text("${responseMode.name.lowercase().replaceFirstChar { it.uppercase() }} ⌄",color=Accent) }
+                DropdownMenu(responseOptions,{ responseOptions=false }) {
+                    ResponseMode.entries.forEach { mode -> DropdownMenuItem(text={ Text(when(mode) { ResponseMode.AUTO -> "Auto · choose for me";ResponseMode.QUICK -> "Quick · everyday questions";ResponseMode.DEEP -> "Deep · complex work" }) },onClick={ vm.setResponseMode(mode);responseOptions=false }) }
+                    HorizontalDivider(color=Line)
+                    DropdownMenuItem(text={ Text(modelName ?: "Set up a phone model") },onClick={ responseOptions=false;showModels=true })
+                    DropdownMenuItem(text={ Text("Manage models") },onClick={ responseOptions=false;onModels() })
                 }
             }
-            if (chat?.web == true) Text("WEB ON", color = Accent, fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp))
-            if (chat?.yolo == true) TextButton(onClick = { vm.stop(); vm.setFlag("yolo", false) }) { Text("Stop auto actions", fontSize = 11.sp) }
+            Spacer(Modifier.weight(1f))
+            if(chat?.web==true) TextButton(onClick={ vm.setFlag("web",false) }) { Text("Web on",fontSize=14.sp) }
+            if(chat?.yolo==true) TextButton(onClick={ vm.stop();vm.setFlag("yolo",false) }) { Text("Stop auto actions") }
         }
-        if (chat?.yolo == true) Text("Actions run without asking", Modifier.padding(horizontal = 20.dp), color = Muted, fontSize = 11.sp)
-        if(home.selected != null) Text("Home · analysis only · chat excerpts and attached passages are shared", Modifier.padding(horizontal = 20.dp), color = Muted, fontSize = 11.sp)
-        homeJobs.firstOrNull { it.chat == active && !it.terminal }?.let { job ->
-            Text("Home: ${job.state} · ${job.error.ifBlank { job.snapshot.optString("detail") }}. Controls are in Work.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = Muted, fontSize = 12.sp)
+        if(home.selected != null) Text("On Home · selected chat excerpts and file passages are shared",Modifier.padding(horizontal=20.dp),color=Muted,fontSize=14.sp)
+        homeJobs.firstOrNull { it.chat==active && !it.terminal }?.let { job ->
+            NavigationRow("Home · ${workState(job.state)}",job.error.ifBlank { job.snapshot.optString("detail").ifBlank { "Open work details" } }) { onWork(job.id) }
         }
         if (messages.isEmpty() && !busy) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Column(Modifier.verticalScroll(rememberScrollState()).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("A little space to think.", fontFamily = FontFamily.Serif, fontSize = 30.sp, color = Ink)
-                    Spacer(Modifier.height(10.dp))
-                    Text(if (modelName == null) "Start with a model that runs on your phone." else "Ask a question, save a thought, or make a plan.",
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                val compact=maxHeight<240.dp
+                val showHint=maxHeight>=110.dp
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(if(compact) 8.dp else 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    if(!compact) {
+                        Text("A little space to think.", fontFamily = FontFamily.Serif, fontSize = 30.sp, color = Ink)
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    if(showHint) Text(if(compact) { if(modelName==null) "Set up Cina for offline chat." else "What would you like to do?" } else if (modelName == null) "Start with a model that runs on your phone." else "Ask a question, save a thought, or make a plan.",
                         color = Muted, fontSize = 14.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(if(compact) 8.dp else 20.dp))
                     if (modelName == null) Button(onClick = onModels) { Text("Get a recommended model") }
-                    else {
+                    else if(!compact) {
                         listOf("Help me plan my week", "Save a note", "Set a reminder").forEach { suggestion ->
                             TextButton(onClick = { drafts[active] = suggestion }) { Text(suggestion, color = Accent) }
                         }
@@ -408,7 +451,7 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
                 }
             }
         } else {
-            LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
+            LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth().semantics { contentDescription="Conversation messages" },
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 items(messages, key = { it.id }) { message ->
                     if (message.role == "user") {
@@ -441,15 +484,17 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
                         if (live.isBlank()) WorkingIndicator() else AssistantResponse(live, streaming = true)
                     }
                 }
+                item(key="conversation-end") { Spacer(Modifier.height(1.dp)) }
             }
         }
+        if(!atBottom && !followReplies) TextButton(onClick={ unreadReply=false;followReplies=true;chatScope.launch { listState.animateScrollToItem(messages.size + if(busy) 1 else 0) } },modifier=Modifier.align(Alignment.CenterHorizontally)) { Text(if(unreadReply) "New reply ↓" else "Latest messages ↓") }
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
             if (attachments.isNotEmpty()) TextButton(onClick = { showFiles = true }) { Text("${attachments.size} attached file${if (attachments.size == 1) "" else "s"} · Review", fontSize = 12.sp) }
             if (messages.isEmpty() && text.isBlank()) Text(if (memoryEnabled) "Memory on · Review new details in Library → Memory." else "Memory off · Saved details are not used or collected.", Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = Muted, fontSize = 12.sp)
             Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(28.dp)).padding(4.dp), verticalAlignment = Alignment.Bottom) {
                 Box {
-                    IconButton(onClick = { showComposerActions = true }, enabled = !busy) {
-                        Text("＋", fontSize = 24.sp, color = Accent, modifier = Modifier.semantics { contentDescription = "Message actions" })
+                    IconButton(onClick = { showComposerActions = true }, enabled = !busy,modifier=Modifier.semantics { contentDescription="Message actions" }) {
+                        CinaIcon("＋",Modifier.size(24.dp),Accent)
                     }
                     DropdownMenu(expanded = showComposerActions, onDismissRequest = { showComposerActions = false }, containerColor = Paper) {
                         DropdownMenuItem(text = { Text("Attach a file") }, onClick = { showComposerActions = false; picker.launch(arrayOf("*/*")) })
@@ -463,10 +508,9 @@ private fun ChatScreen(vm: AssistantViewModel, onModels: () -> Unit, onMenu: () 
                     textStyle = TextStyle(color = Ink, fontSize = 16.sp, lineHeight = 22.sp), maxLines = 5,
                     decorationBox = { inner -> Box { if (text.isBlank()) Text("Message Cina…", color = Muted, fontSize = 16.sp); inner() } })
                 Spacer(Modifier.width(8.dp))
-                FilledIconButton(onClick = { if (busy) vm.stop() else if (vm.send(text)) drafts[active] = "" }, enabled = busy || (text.isNotBlank() && canSend),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Accent, contentColor = Color.White), modifier = Modifier.size(48.dp)) {
-                    Text(if (busy) "■" else "↑", fontSize = if (busy) 16.sp else 23.sp,
-                        modifier = Modifier.semantics { contentDescription = if (busy) "Stop response" else "Send message" })
+                FilledIconButton(onClick = { if (busy) vm.stop() else if (vm.send(text)) { followReplies=true;drafts[active] = "" } }, enabled = busy || (text.isNotBlank() && canSend),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Accent, contentColor = Color.White), modifier = Modifier.size(48.dp).semantics { contentDescription = if (busy) "Stop response" else "Send message" }) {
+                    CinaIcon(if(busy) "■" else "↑",Modifier.size(24.dp),Color.White)
                 }
             }
         }

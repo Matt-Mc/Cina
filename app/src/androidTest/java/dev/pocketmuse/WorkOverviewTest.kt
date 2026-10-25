@@ -21,8 +21,7 @@ class WorkOverviewTest {
         try {
             compose.onNodeWithContentDescription("Open menu").performClick()
             compose.onNodeWithText("Work").performClick()
-            compose.onNodeWithText("Work overview").performClick()
-            compose.onNodeWithText("Needs your attention").assertIsDisplayed()
+            compose.onNodeWithText("Needs you",substring=true).assertIsDisplayed()
             compose.waitUntil(10000) { compose.onAllNodesWithText("Overview fixture").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Overview fixture").assertIsDisplayed()
             compose.onRoot().captureToImage().asAndroidBitmap().let { bitmap -> File(base.getExternalFilesDir(null),"work-overview.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }

@@ -17,7 +17,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-internal fun DurableWorkContent(onOpenResult: (String)->Unit,vm: DurableWorkViewModel=viewModel()) {
+internal fun DurableWorkContent(onOpenResult: (String,Long)->Unit,vm: DurableWorkViewModel=viewModel(),focusId: String? = null) {
     val tasks by vm.tasks.collectAsState()
     val busy by vm.busy.collectAsState()
     val message by vm.message.collectAsState()
@@ -26,13 +26,15 @@ internal fun DurableWorkContent(onOpenResult: (String)->Unit,vm: DurableWorkView
     var editing by remember { mutableStateOf<DurableTask?>(null) }
     var approval by remember { mutableStateOf<DurableTask?>(null) }
     var history by remember { mutableStateOf<DurableTask?>(null) }
+    var openedFocus by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(focusId,tasks) { if(focusId!=null && openedFocus!=focusId) tasks.firstOrNull { it.id==focusId }?.let { openedFocus=focusId;if(it.state=="waiting_for_approval") approval=it } }
     var showFinished by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { while(true) { vm.refresh();delay(1500) } }
     Text("Build up to eight ordered local steps. Review every remaining step and its start time for one approved run. Completed steps never run again.",color=Muted)
     Button(enabled=!busy,onClick={ editing=null;editor=true }) { Text("New local task") }
     if(message.isNotBlank()) Text(message,color=Ink)
     if(tasks.isEmpty()) EmptyState("Ready when you are","Create a local task here, or turn a kept Inbox action into a task.")
-    tasks.filter { showFinished || it.state !in setOf("completed","cancelled") }.forEach { task ->
+    tasks.filter { if(focusId!=null) it.id==focusId else showFinished || it.state !in setOf("completed","cancelled") }.forEach { task ->
         Surface(color=Soft,shape=MaterialTheme.shapes.medium) { Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             SectionTitle(task.action.title)
             Text("${task.steps.count { it.state=="completed" }} of ${task.steps.size} steps complete · ${workState(task.state)}",color=Accent)
@@ -50,8 +52,8 @@ internal fun DurableWorkContent(onOpenResult: (String)->Unit,vm: DurableWorkView
             }
             if(task.steps.any { it.state=="completed" }) {
                 Text("Verified results remain if later steps stop. Later edits or deletion do not rerun completed steps.",color=Muted)
-                task.steps.filter { it.state=="completed" }.map { it.action.kind }.distinct().forEach { kind ->
-                    TextButton(onClick={ onOpenResult(kind) }) { Text(if(kind=="note") "Open Notes" else "Open Reminders") }
+                task.steps.filter { it.state=="completed" && it.resultId!=null }.forEach { step ->
+                    TextButton(onClick={ onOpenResult(step.action.kind,step.resultId!!) }) { Text("Open ${step.action.title}") }
                 }
             }
             TextButton(onClick={ history=task;vm.history(task) }) { Text("Task history") }
@@ -95,6 +97,8 @@ internal fun WorkTaskEditor(task: DurableTask?,proposal: IntakeProposal?,onDismi
     val completed=task?.steps?.count { it.state=="completed" } ?: 0
     val index=selected.coerceIn(0,actions.lastIndex)
     val action=actions[index]
+    var noteDrafts by rememberSaveable(task?.id,proposal?.id) { mutableStateOf(actions.map { it.body }) }
+    var reminderDrafts by rememberSaveable(task?.id,proposal?.id) { mutableStateOf(actions.map { it.whenMillis ?: 0L }) }
     val editable=index>=completed
     val activity=LocalActivity.current as? ComponentActivity
     fun update(value: WorkAction) { actions=actions.mapIndexed { i,old -> if(i==index) value else old } }
@@ -109,7 +113,11 @@ internal fun WorkTaskEditor(task: DurableTask?,proposal: IntakeProposal?,onDismi
             proposal?.let { Text("Source evidence: ${it.suggestion.quote}",color=Muted) }
             actions.forEachIndexed { i,step -> TextButton(onClick={ selected=i }) { Text("Step ${i+1}: ${step.title.ifBlank { "Untitled" }}${if(i<completed) " · completed" else ""}${if(i==index) " · editing" else ""}") } }
             if(editable) {
-                ScreenTabs(listOf("Note","Reminder"),if(action.kind=="note") 0 else 1) { update(WorkAction(if(it==0) "note" else "reminder",action.title)) }
+                ScreenTabs(listOf("Note","Reminder"),if(action.kind=="note") 0 else 1) {
+                    if(action.kind=="note") noteDrafts=actions.mapIndexed { i,a -> if(i==index) action.body else noteDrafts.getOrElse(i) { a.body } }
+                    else reminderDrafts=actions.mapIndexed { i,a -> if(i==index) action.whenMillis ?: 0L else reminderDrafts.getOrElse(i) { a.whenMillis ?: 0L } }
+                    update(if(it==0) WorkAction("note",action.title,noteDrafts.getOrElse(index) { "" }) else WorkAction("reminder",action.title,whenMillis=reminderDrafts.getOrElse(index) { 0L }.takeIf { time -> time>0 }))
+                }
                 OutlinedTextField(action.title,{ if(it.length<=160) update(action.copy(title=it)) },label={ Text("Task title") })
                 if(action.kind=="note") OutlinedTextField(action.body,{ if(it.length<=20_000) update(action.copy(body=it)) },label={ Text("Note content") },minLines=3,maxLines=6)
                 else {
@@ -117,18 +125,24 @@ internal fun WorkTaskEditor(task: DurableTask?,proposal: IntakeProposal?,onDismi
                     Text("Reminder time must be after the plan starts.",color=Muted)
                 }
                 Row {
-                    if(index>completed) TextButton(onClick={ val copy=actions.toMutableList();java.util.Collections.swap(copy,index,index-1);actions=copy;selected=index-1 }) { Text("Move earlier") }
-                    if(index<actions.lastIndex) TextButton(onClick={ val copy=actions.toMutableList();java.util.Collections.swap(copy,index,index+1);actions=copy;selected=index+1 }) { Text("Move later") }
+                    if(index>completed) TextButton(onClick={ val copy=actions.toMutableList();java.util.Collections.swap(copy,index,index-1);noteDrafts=noteDrafts.toMutableList().apply { while(size<actions.size) add("");java.util.Collections.swap(this,index,index-1) };reminderDrafts=reminderDrafts.toMutableList().apply { while(size<actions.size) add(0L);java.util.Collections.swap(this,index,index-1) };actions=copy;selected=index-1 }) { Text("Move earlier") }
+                    if(index<actions.lastIndex) TextButton(onClick={ val copy=actions.toMutableList();java.util.Collections.swap(copy,index,index+1);noteDrafts=noteDrafts.toMutableList().apply { while(size<actions.size) add("");java.util.Collections.swap(this,index,index+1) };reminderDrafts=reminderDrafts.toMutableList().apply { while(size<actions.size) add(0L);java.util.Collections.swap(this,index,index+1) };actions=copy;selected=index+1 }) { Text("Move later") }
                 }
-                if(actions.size>completed+1) TextButton(onClick={ actions=actions.filterIndexed { i,_ -> i!=index };selected=(index-1).coerceAtLeast(completed) }) { Text("Remove step") }
+                if(actions.size>completed+1) TextButton(onClick={ noteDrafts=noteDrafts.filterIndexed { i,_ -> i!=index };reminderDrafts=reminderDrafts.filterIndexed { i,_ -> i!=index };actions=actions.filterIndexed { i,_ -> i!=index };selected=(index-1).coerceAtLeast(completed) }) { Text("Remove step") }
             } else Text("This step is already saved and cannot be changed here. ${action.body}",color=Muted)
-            if(actions.size<WorkCoordinator.MAX_STEPS) OutlinedButton(onClick={ actions=actions+WorkAction("note","","");selected=actions.lastIndex }) { Text("Add step") }
+            if(actions.size<WorkCoordinator.MAX_STEPS) OutlinedButton(onClick={ noteDrafts=actions.mapIndexed { i,a -> noteDrafts.getOrElse(i) { a.body } }+"";reminderDrafts=actions.mapIndexed { i,a -> reminderDrafts.getOrElse(i) { a.whenMillis ?: 0L } }+0L;actions=actions+WorkAction("note","","");selected=actions.lastIndex }) { Text("Add step") }
             HorizontalDivider()
             Text(runAt?.let { "Start: ${DateFormat.getDateTimeInstance().format(Date(it))}" } ?: "Start after approval")
             OutlinedButton(onClick={ activity?.let { chooseDateTime(it,runAt ?: System.currentTimeMillis()) { runAt=it } } }) { Text("Schedule start") }
             if(runAt!=null) TextButton(onClick={ runAt=null }) { Text("Run after approval instead") }
             Text("One scheduled run, not a repeating grant. Android may delay it; more than 15 minutes late needs approval again.",color=Muted)
-            if(!valid) Text("Complete every remaining step and choose future times before saving.",color=MaterialTheme.colorScheme.error)
+            if(!valid) Column {
+                actions.drop(completed).forEachIndexed { offset,step ->
+                    val issue=when { step.title.isBlank() -> "Add a title";step.kind=="note" && step.body.isBlank() -> "Add note content";step.kind=="reminder" && (step.whenMillis ?: 0)<=maxOf(System.currentTimeMillis(),runAt ?: 0) -> "Choose a reminder time after the plan starts";else -> null }
+                    if(issue!=null) TextButton(onClick={ selected=completed+offset }) { Text("Step ${completed+offset+1}: $issue",color=MaterialTheme.colorScheme.error) }
+                }
+                if(runAt!=null && runAt!!<=System.currentTimeMillis()) Text("Choose a future start time or run after approval.",color=MaterialTheme.colorScheme.error)
+            }
         }
     },confirmButton={ TextButton(enabled=valid,onClick={ onSave(actions,runAt) }) { Text("Save task for review") } },dismissButton={ TextButton(onClick=onDismiss) { Text("Cancel") } })
 }

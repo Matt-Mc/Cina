@@ -1,0 +1,108 @@
+{
+  "tests": 78,
+  "failures": 0,
+  "suites": [
+    {
+      "suite": "dev.pocketmuse.ApprovedMarkdownTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.AssistantSkillsTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.CapturePolicyTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.ContextSearchPolicyTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.ConversationContextTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.GoogleServiceTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.HomeClientTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.LibraryBackupCryptoTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.ModelChoicesTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.ModelResponseTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.ReminderTimeTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.ResponsePolicyTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.ToolResponseProtocolTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.ToolTurnPolicyTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.UiUxPolicyTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.UsabilityPolicyTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "suite": "dev.pocketmuse.WorkActionTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0
+    }
+  ]
+}

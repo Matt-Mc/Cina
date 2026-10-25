@@ -40,3 +40,9 @@ internal object ModelChoices {
         URLEncoder.encode(it, Charsets.UTF_8.name()).replace("+", "%20")
     }
 }
+
+/** One storage-compatible starting candidate, with no claim of measured task reliability. */
+internal fun starterChoice(models: List<PopularGgufModel>, suitable: (RemoteModel)->Boolean): RemoteModel? =
+    models.sortedByDescending { it.downloads }.firstNotNullOfOrNull { model ->
+        model.files.filter(suitable).sortedWith(compareBy<RemoteModel> { if(it.file.contains("Q4_K_M",true)) 0 else 1 }.thenBy { it.size }).firstOrNull()
+    }

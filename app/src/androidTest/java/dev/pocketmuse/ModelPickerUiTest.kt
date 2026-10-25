@@ -17,7 +17,7 @@ class ModelPickerUiTest {
     @Test fun overviewHasOnlyTheThreeModelChoices() {
         var opened: ModelSlot? = null
         compose.setContent { MaterialTheme { Column { ModelSlotOverview("Small phone", "Bigger phone", "qwen3:4b", true) { opened = it } } } }
-        listOf("Phone model", "Heavy phone model", "Home model").forEach { compose.onNodeWithText(it).assertIsDisplayed() }
+        listOf("Phone model", "Heavy phone model", "Home model").forEach { compose.onNodeWithContentDescription("Choose $it").assertIsDisplayed() }
         listOf("Installed", "Discover", "Files").forEach { compose.onAllNodesWithText(it).assertCountEquals(0) }
         compose.onNodeWithContentDescription("Choose Home model").performClick()
         compose.runOnIdle { assertEquals(ModelSlot.HOME, opened) }

@@ -1,6 +1,7 @@
 package dev.pocketmuse
 
 import androidx.compose.ui.test.*
+import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -47,8 +48,10 @@ class ContextLibraryFlowTest {
         compose.waitUntil(10_000) { LocalStore(base).use { ContextRepository(it).projects().any { p -> p.name==project } } }
         compose.onNodeWithText("Back to Inbox").performClick()
         compose.onAllNodesWithText("Open")[0].performScrollTo().performClick()
+        compose.onNodeWithText("File in a project").performScrollTo().performClick()
         compose.onNodeWithContentDescription("Link to $project").performScrollTo().performClick()
-        compose.onNodeWithText("Save as knowledge").performScrollTo().performClick()
+        compose.onNodeWithText("Save fact…").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Save knowledge").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Save knowledge").performClick()
         compose.waitUntil(10_000) { LocalStore(base).use { ContextRepository(it).knowledge(id).size==1 } }
         compose.onNodeWithText("Knowledge & projects").performScrollTo().performClick()
@@ -61,7 +64,8 @@ class ContextLibraryFlowTest {
         compose.onNodeWithText("Find").performClick()
         compose.onNodeWithText("Search saved context").performTextReplacement("green")
         compose.onNodeWithContentDescription("Search current knowledge only").performClick()
-        compose.onNodeWithText("Find matches").performClick()
+        closeSoftKeyboard()
+        compose.onNodeWithText("Find matches").performScrollTo().performClick()
         lateinit var contextModel: ContextViewModel
         compose.runOnIdle { contextModel = ViewModelProvider(compose.activity)[ContextViewModel::class.java] }
         compose.waitUntil(10_000) { contextModel.hits.value.any { it.body == "The Cedar reference color is green." } }
@@ -80,6 +84,7 @@ class ContextLibraryFlowTest {
         compose.onNodeWithText("Back to Library").assertIsDisplayed()
         // This destination restores its prior search draft when the navigation state is retained.
         compose.onNodeWithText("Search saved context").performTextReplacement("green")
+        closeSoftKeyboard()
         compose.onNodeWithText("Find matches").performScrollTo().performClick()
         try {
             compose.waitUntil(10_000) { contextModel.hits.value.any { it.body == "The Cedar reference color is green." } }

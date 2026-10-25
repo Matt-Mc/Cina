@@ -9,7 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun IntakeReviewCard(proposal: IntakeProposal, busy: Boolean,
+internal fun IntakeReviewCard(proposal: IntakeProposal, busy: Boolean, onOutcome: (() -> Unit)? = null,
     onUpdate: (IntakeProposal, String, String) -> Unit) {
     var editing by rememberSaveable(proposal.id) { mutableStateOf(false) }
     var text by rememberSaveable(proposal.id, proposal.revision) { mutableStateOf(proposal.suggestion.text) }
@@ -25,16 +25,21 @@ internal fun IntakeReviewCard(proposal: IntakeProposal, busy: Boolean,
             Text(proposal.suggestion.text, color = Ink)
             if (proposal.edited) Text("Edited by you. Check that the source still supports this wording.", color = Muted)
             TextButton(onClick = { evidence = true }) { Text("View source quote") }
+            if(onOutcome!=null) Button(onClick=onOutcome,enabled=!busy) { Text(if(proposal.suggestion.kind=="fact") "Save fact…" else "Create task…") }
+            else if(proposal.state!="accepted") Button(onClick={ onUpdate(proposal,proposal.suggestion.text,"accepted") },enabled=!busy) { Text(if(proposal.suggestion.kind=="filing") "Use category" else "Keep review only") }
             Row {
-                TextButton(onClick = { editing = true }, enabled = !busy) { Text("Edit") }
-                TextButton(onClick = { onUpdate(proposal, proposal.suggestion.text, "accepted") }, enabled = !busy && proposal.state != "accepted") {
-                    Text(if (proposal.suggestion.kind == "filing") "Use category" else "Keep")
+                TextButton(onClick={ editing=true },enabled=!busy) { Text("Edit") }
+                TextButton(onClick={ onUpdate(proposal,proposal.suggestion.text,"deferred") },enabled=!busy && proposal.state!="deferred") { Text("Later") }
+                var more by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(onClick={ more=true }) { Text("More") }
+                    DropdownMenu(more,{ more=false }) {
+                        if(onOutcome!=null) DropdownMenuItem(text={ Text("Keep review only") },enabled=!busy && proposal.state!="accepted",onClick={ more=false;onUpdate(proposal,proposal.suggestion.text,"accepted") })
+                        DropdownMenuItem(text={ Text("Discard suggestion") },enabled=!busy && proposal.state!="discarded",onClick={ more=false;onUpdate(proposal,proposal.suggestion.text,"discarded") })
+                    }
                 }
             }
-            Row {
-                TextButton(onClick = { onUpdate(proposal, proposal.suggestion.text, "deferred") }, enabled = !busy && proposal.state != "deferred") { Text("Defer") }
-                TextButton(onClick = { onUpdate(proposal, proposal.suggestion.text, "discarded") }, enabled = !busy && proposal.state != "discarded") { Text("Discard") }
-            }
+
         }
     }
     if (editing) AlertDialog(onDismissRequest = { editing = false }, title = { Text("Edit $label") },

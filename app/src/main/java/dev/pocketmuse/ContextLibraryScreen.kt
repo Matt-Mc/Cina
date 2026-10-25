@@ -20,7 +20,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-internal fun ContextLibraryScreen(vm: ContextViewModel,onBack: () -> Unit,onOpenSource: (String) -> Unit, backLabel: String = "Back to Inbox") {
+internal fun ContextLibraryScreen(vm: ContextViewModel,onBack: () -> Unit,onOpenSource: (String) -> Unit, backLabel: String = "Back to Inbox", selectedId: String? = null, selectionKind: String? = null) {
     var storage by rememberSaveable { mutableStateOf(false) }
     if(storage) { LibraryStorageScreen(onBack={ storage=false;vm.refresh();vm.clearResults() });return }
     val projects by vm.projects.collectAsState()
@@ -40,10 +40,11 @@ internal fun ContextLibraryScreen(vm: ContextViewModel,onBack: () -> Unit,onOpen
     var projectEditor by remember { mutableStateOf(false) }
     var projectToEdit by remember { mutableStateOf<ContextProject?>(null) }
     var projectToDelete by remember { mutableStateOf<ContextProject?>(null) }
+    LaunchedEffect(selectedId,selectionKind) { if(selectedId!=null) tab=if(selectionKind=="project") 2 else 1 }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
-        val observer=LifecycleEventObserver { _,event -> if(event==Lifecycle.Event.ON_RESUME) { vm.refresh();vm.clearResults() } }
-        lifecycle.addObserver(observer);vm.refresh();vm.clearResults()
+        val observer=LifecycleEventObserver { _,event -> if(event==Lifecycle.Event.ON_RESUME) { vm.refresh() } }
+        lifecycle.addObserver(observer);vm.refresh()
         onDispose { lifecycle.removeObserver(observer) }
     }
     BackHandler { onBack() }
@@ -79,8 +80,8 @@ internal fun ContextLibraryScreen(vm: ContextViewModel,onBack: () -> Unit,onOpen
             }
             1 -> {
                 item { Text("Facts you explicitly saved from reviewed suggestions. Corrections keep a history. This library is not automatically added to chat prompts.",color=Muted) }
-                if(knowledge.isEmpty()) item { EmptyState("No saved knowledge yet","Keep a fact suggestion in the Inbox, then choose Save as knowledge.") }
-                items(knowledge,key={ it.id }) { entry ->
+                if(knowledge.isEmpty()) item { EmptyState("No saved knowledge yet","Review a fact suggestion in the Inbox, then choose Save fact.") }
+                items(knowledge.filter { selectedId==null || selectionKind!="knowledge" || it.id==selectedId },key={ it.id }) { entry ->
                     Surface(color=Soft,shape=MaterialTheme.shapes.medium) { Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                         Text(entry.text,color=Ink)
                         Text(knowledgeState(entry),color=Muted)
@@ -100,7 +101,7 @@ internal fun ContextLibraryScreen(vm: ContextViewModel,onBack: () -> Unit,onOpen
             2 -> {
                 item { Text("Link a source to one or more projects from its Inbox detail. Removing a project keeps its sources and knowledge.",color=Muted) }
                 item { Button(onClick={ projectToEdit=null;projectEditor=true },enabled=!busy) { Text("New project") } }
-                items(projects,key={ it.id }) { project ->
+                items(projects.filter { selectedId==null || selectionKind!="project" || it.id==selectedId },key={ it.id }) { project ->
                     Column { SectionTitle(project.name)
                         Row {
                             TextButton(onClick={ projectFilter=project.id;tab=0;vm.clearResults() }) { Text("Search project") }

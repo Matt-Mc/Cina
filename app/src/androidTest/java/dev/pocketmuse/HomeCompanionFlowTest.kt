@@ -81,7 +81,7 @@ class HomeCompanionFlowTest {
             val id = repo.jobs().first { it.chat == chat }.id
             val manager = base.getSystemService(android.app.NotificationManager::class.java)
             manager.activeNotifications.single { it.tag == "home:$id" }.notification.contentIntent.send()
-            compose.waitUntil(5000) { compose.onAllNodesWithText("Needs your attention").fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5000) { compose.onAllNodesWithText("Needs you",substring=true).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Please analyse the test passage").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("Completed · Home · qwen3:4b").assertIsDisplayed()
         } finally {

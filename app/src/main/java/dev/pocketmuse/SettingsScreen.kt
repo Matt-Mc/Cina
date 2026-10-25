@@ -32,6 +32,7 @@ internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit
         NavigationRow("Connections", "${connections.count { it.connected } + if(home.paired) 1 else 0} connected · services & tools", { onNavigate("Connections") })
         NavigationRow("Appearance", "${profile.petName.ifBlank { "Cina" }} · appearance & name", { onNavigate("Companion") })
         NavigationRow("Chat & permissions", "New chat defaults & action approvals", { onNavigate("Chat preferences") })
+        if(BuildConfig.INBOX_ENABLED) NavigationRow("Captured library backup", "Storage, cleanup & encrypted source backups") { onNavigate("Library storage") }
         NavigationRow("About & updates", "Version ${BuildConfig.VERSION_NAME}", { onNavigate("About") })
         Text("Conversations and personal details are stored on this phone. Home receives chat excerpts and attached passages when you choose a Home model. Connected services receive data when you use them.",
             color = Muted, fontSize = 12.sp, lineHeight = 18.sp)

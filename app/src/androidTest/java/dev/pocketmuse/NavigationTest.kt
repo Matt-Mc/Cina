@@ -82,9 +82,9 @@ class NavigationTest {
         }
         capture("consolidated-menu.png")
         compose.onNodeWithText("Library").performClick()
-        listOf("Inbox", "Notes", "Knowledge & projects", "Memory").forEach { compose.onNodeWithText(it).assertIsDisplayed() }
+        listOf("Inbox", "Notes", "Knowledge & projects", "Memory").forEach { compose.onNodeWithText(it).performScrollTo().assertIsDisplayed() }
         capture("consolidated-library.png")
-        compose.onNodeWithText("Notes").performClick()
+        compose.onNodeWithText("Manage notes").performScrollTo().performClick()
         compose.onNodeWithContentDescription("Go back").performClick()
         compose.onNodeWithText("Knowledge & projects").assertIsDisplayed()
     }
@@ -92,7 +92,7 @@ class NavigationTest {
     @Test fun openingModelManagementPreservesChatDraftAndUsesCompactActions() {
         val draft = "Help me plan a weekend walk"
         compose.onNodeWithContentDescription("Message Cina").performTextInput(draft)
-        compose.onNodeWithText("Choose a model ⌄").performClick()
+        compose.onNodeWithText("Auto ⌄").performClick()
         compose.onNodeWithText("Manage models").performClick()
         compose.onNodeWithText("Models").assertIsDisplayed()
         compose.onNodeWithContentDescription("Go back").performClick()
@@ -123,7 +123,7 @@ class NavigationTest {
         compose.onNodeWithContentDescription("Open menu").performClick()
         compose.onNodeWithText("Settings").performClick()
         compose.onNodeWithText("About you").performClick()
-        compose.onNodeWithText("About you").assertIsSelected()
+        compose.onNodeWithText("How Cina should help").assertIsDisplayed()
     }
 }
 

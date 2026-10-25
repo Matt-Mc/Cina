@@ -20,7 +20,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-internal fun InboxScreen(vm: InboxViewModel = viewModel(), sourceId: String? = null, onSourceOpened: () -> Unit = {}) {
+internal fun InboxScreen(vm: InboxViewModel = viewModel(), sourceId: String? = null, onSourceOpened: () -> Unit = {}, returnToOrigin: Boolean = false, onLeaveSource: () -> Unit = {}, captureRequest: Int = 0) {
     val contextVm: ContextViewModel = viewModel()
     val workVm: DurableWorkViewModel = viewModel()
     val workMessage by workVm.message.collectAsState()
@@ -32,6 +32,7 @@ internal fun InboxScreen(vm: InboxViewModel = viewModel(), sourceId: String? = n
     val contextMessage by contextVm.message.collectAsState()
     val contextBusy by contextVm.busy.collectAsState()
     var library by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(captureRequest) { if(sourceId==null) { library=false;vm.closeDetail();vm.refresh() } }
     LaunchedEffect(sourceId) {
         sourceId?.let { library = false; vm.openSource(it); onSourceOpened() }
     }
@@ -57,21 +58,15 @@ internal fun InboxScreen(vm: InboxViewModel = viewModel(), sourceId: String? = n
     }
     promote?.let { proposal -> KnowledgePromotionDialog(proposal,{ promote=null }) { expires -> contextVm.promote(proposal,expires);promote=null } }
     taskProposal?.let { proposal -> WorkTaskEditor(null,proposal,{ taskProposal=null }) { actions,runAt -> workVm.savePlan(actions,runAt,proposal=proposal);taskProposal=null } }
-    BackHandler(detail != null) { vm.closeDetail() }
+    BackHandler(detail != null) { vm.closeDetail(); if(returnToOrigin) onLeaveSource() }
     val opened = detail
     if (opened != null) {
         var previewPage by rememberSaveable(opened.item.id) { mutableIntStateOf(0) }
         val pageCount = maxOf(1, (opened.text.length + 11_999) / 12_000)
         Page(opened.item.title, "Saved ${DateFormat.getDateTimeInstance().format(Date(opened.item.capturedAt))} · ${opened.origin}") {
-            TextButton(onClick = vm::closeDetail) { Text("Back to Inbox") }
+            TextButton(onClick = { vm.closeDetail(); if(returnToOrigin) onLeaveSource() }) { Text(if(returnToOrigin) "Back to results" else "Back to Inbox") }
             TextButton(onClick = { library=true }) { Text("Knowledge & projects") }
             if(contextMessage.isNotBlank()) Text(contextMessage,color=Muted)
-            SectionTitle("Projects")
-            if(projects.isEmpty()) Text("Create a project in Knowledge & projects to group sources.",color=Muted)
-            projects.forEach { project -> Row {
-                Checkbox(project.id in links,{ checked -> contextVm.link(opened.item.id,project.id,checked) },enabled=!contextBusy,modifier=Modifier.semantics { contentDescription="Link to ${project.name}" })
-                Text(project.name,modifier=Modifier.padding(top=12.dp))
-            } }
             Text(extractionDescription(opened.item.extraction), color = Muted)
             if (opened.item.duplicate) Text("Another saved item has the same original content.", color = Muted)
             if (opened.item.category.isNotBlank()) Text("Category: ${opened.item.category}", color = Accent)
@@ -83,19 +78,30 @@ internal fun InboxScreen(vm: InboxViewModel = viewModel(), sourceId: String? = n
             if (currentReview != null && currentReview.proposals.isEmpty()) {
                 if (currentReview.state == "reviewed") Text("The model returned no supported suggestions. You can try again.", color = Muted)
                 Button(onClick = vm::interpret, enabled = !busy && !interpreting && (opened.text.isNotBlank() || opened.accompanyingText.isNotBlank())) {
-                    Text(if (interpreting) "Interpreting…" else "Interpret with local model")
+                    Text(if (interpreting) "Finding details…" else "Find useful details")
                 }
             }
             if (interpreting) TextButton(onClick = vm::cancelInterpretation) { Text("Stop interpretation") }
             currentReview?.proposals?.firstOrNull()?.let { Text("${it.coverage}\nModel: ${it.model}", color = Muted) }
             currentReview?.proposals?.forEach { proposal ->
-                IntakeReviewCard(proposal, busy, vm::updateProposal)
-                if(proposal.suggestion.kind=="action" && proposal.state=="accepted") TextButton(enabled=!workBusy && !busy,onClick={ taskProposal=proposal }) { Text("Create task for review") }
+                IntakeReviewCard(proposal, busy || contextBusy || workBusy, onUpdate=vm::updateProposal,
+                    onOutcome=if(proposal.suggestion.kind in setOf("fact","action") && !(proposal.suggestion.kind=="fact" && knowledge.any { it.proposalId==proposal.id })) {
+                        { vm.acceptForOutcome(proposal) { accepted -> if(accepted.suggestion.kind=="fact") promote=accepted else taskProposal=accepted } }
+                    } else null)
                 if(proposal.suggestion.kind=="fact" && proposal.state=="accepted") {
                     val saved=knowledge.firstOrNull { it.proposalId==proposal.id }
-                    if(saved==null) TextButton(onClick={ promote=proposal },enabled=!contextBusy && !busy) { Text("Save as knowledge") }
-                    else TextButton(onClick={ library=true }) { Text("Saved knowledge · ${knowledgeState(saved)}") }
+                    if(saved!=null) TextButton(onClick={ library=true }) { Text("Saved knowledge · ${knowledgeState(saved)}") }
                 }
+            }
+            var filing by rememberSaveable(opened.item.id) { mutableStateOf(false) }
+            TextButton(onClick={ filing=!filing }) { Text(if(filing) "Hide project filing" else "File in a project") }
+            if(filing) {
+            SectionTitle("Projects")
+            if(projects.isEmpty()) Text("Create a project in Knowledge & projects to group sources.",color=Muted)
+            projects.forEach { project -> Row {
+                Checkbox(project.id in links,{ checked -> contextVm.link(opened.item.id,project.id,checked) },enabled=!contextBusy,modifier=Modifier.semantics { contentDescription="Link to ${project.name}" })
+                Text(project.name,modifier=Modifier.padding(top=12.dp))
+            } }
             }
             if (opened.accompanyingText.isNotBlank()) {
                 SectionTitle("Shared with this document")

@@ -13,10 +13,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-internal fun ColumnScope.MemoryContent(vm: AssistantViewModel, onOpenChat: () -> Unit) {
+internal fun ColumnScope.MemoryContent(vm: AssistantViewModel, onOpenChat: () -> Unit, focusId: Long? = null) {
     val memories by vm.memories.collectAsState(); val enabled by vm.memoryEnabled.collectAsState()
     val suggestions by vm.memorySuggestions.collectAsState()
     val stalled by vm.stalledMemories.collectAsState()
+    var deleting by remember { mutableStateOf<Memory?>(null) }
     var editing by remember { mutableStateOf<Memory?>(null) }; var draft by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SettingToggle("Memory", "Use saved details and suggest new ones from your messages.", enabled, vm::setMemoryEnabled)
@@ -44,20 +45,22 @@ internal fun ColumnScope.MemoryContent(vm: AssistantViewModel, onOpenChat: () ->
             }
         }
         if(memories.isEmpty()) EmptyState("Keep useful details", "Review suggested details here, or explicitly ask Cina to remember something in chat.")
-        memories.forEach { memory ->
+        memories.filter { focusId==null || it.id==focusId }.forEach { memory ->
             Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(memory.fact, color = Ink, fontSize = 15.sp, lineHeight = 22.sp)
                 memory.expiresMillis?.let { expiry -> Text("${if(expiry <= System.currentTimeMillis()) "Expired" else "Relevant until"} · ${java.time.Instant.ofEpochMilli(expiry).atZone(java.time.ZoneId.systemDefault()).toLocalDate()}", color = Muted, fontSize = 12.sp) }
                 memory.sourceChatId?.let { sourceId ->
                     TextButton(onClick = { vm.openChat(sourceId); onOpenChat() }) { Text("Open source chat") }
                 }
-                Row { TextButton(onClick = { editing = memory; draft = memory.fact }) { Text("Edit") }; TextButton(onClick = { vm.deleteMemory(memory.id) }) { Text("Delete", color = Muted) } }
+                Row { TextButton(onClick = { editing = memory; draft = memory.fact }) { Text("Edit") }; TextButton(onClick = { deleting=memory }) { Text("Delete", color = Muted) } }
             }
             HorizontalDivider(color = Line)
         }
     }
+    deleting?.let { memory -> AlertDialog(onDismissRequest={ deleting=null },title={ Text("Delete this personal detail?") },text={ Text(memory.fact) },
+        confirmButton={ TextButton(onClick={ vm.deleteMemory(memory.id);deleting=null }) { Text("Delete",color=MaterialTheme.colorScheme.error) } },dismissButton={ TextButton(onClick={ deleting=null }) { Text("Keep") } }) }
     if(editing != null) AlertDialog(onDismissRequest = { editing = null }, containerColor = Paper, title = { Text("Edit memory") },
-        text = { OutlinedTextField(draft, { draft = it }, modifier = Modifier.fillMaxWidth()) },
+        text = { OutlinedTextField(draft, { draft = it },label={ Text("Personal detail") }, modifier = Modifier.fillMaxWidth()) },
         confirmButton = { TextButton(onClick = { vm.editMemory(editing!!.id, draft); editing = null }) { Text("Save") } },
         dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } })
 }
