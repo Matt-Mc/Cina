@@ -12,10 +12,14 @@ internal object ResponsePolicy {
         if(mentions("\\b(schedule|start|later)\\b")) add("schedule_work")
         if(mentions("\\b(pause|cancel|resume|stop)\\b")) add("manage_work")
     }
-    fun resolve(mode: ResponseMode, request: String, goal: Boolean = false): ResponseMode {
+    fun resolve(mode: ResponseMode, request: String, goal: Boolean = false, contextChars: Long = 0): ResponseMode {
         if (mode != ResponseMode.AUTO) return mode
-        val complex = Regex("\\b(compare|analy[sz]e|tradeoffs?|research|strategy|debug|step.by.step|detailed)\\b", RegexOption.IGNORE_CASE)
-        return if (goal || request.length > 600 || complex.containsMatchIn(request)) ResponseMode.DEEP else ResponseMode.QUICK
+        val complex = Regex("\\b(compare|analy[sz]e|tradeoffs?|research|strategy|debug|step.by.step|detailed|comprehensive|multi.step)\\b", RegexOption.IGNORE_CASE)
+        val substantial = Regex("^(?:(?:please|can you|could you|help me)\\s+)*(?:build|design|develop|organize|plan|evaluate)\\b", RegexOption.IGNORE_CASE)
+        val actions = Regex("\\b(search|find|read|save|create|send|schedule|remind|update|delete|summari[sz]e)\\b", RegexOption.IGNORE_CASE)
+            .findAll(request).map { it.value.lowercase() }.toSet().size
+        val multipleSteps = actions >= 2 && Regex("\\b(and|then|also|after)\\b", RegexOption.IGNORE_CASE).containsMatchIn(request)
+        return if (goal || request.length > 600 || contextChars > 6000 || complex.containsMatchIn(request) || substantial.containsMatchIn(request.trim()) || multipleSteps) ResponseMode.DEEP else ResponseMode.QUICK
     }
 
     fun skills(skills: List<AssistantSkill>, request: String): String {

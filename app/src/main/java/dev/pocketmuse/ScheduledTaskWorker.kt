@@ -71,7 +71,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Coroutin
                             runtime.use(model, chat,
                                 applicationContext.getSharedPreferences("settings", 0).getBoolean("memory", true),
                                 YouProfileStore(applicationContext).read(), task.prompt, executionScope = "scheduled:$id:$executionTime")
-                            var answer = splitModelResponse(runtime.generate(task.prompt) {}).answer
+                            var answer = splitModelResponse(runtime.generateTurn(task.prompt) {}).answer
                             val executedCalls = mutableListOf<String>()
                             val results = mutableListOf<String>()
                             suspend fun finish(raw: String): String {

@@ -13,6 +13,106 @@ import java.io.File
 
 /** Deterministic runtime tests: model responses are scripted; parsing, storage and tools are real. */
 class ToolResponseRecoveryTest {
+    @Test fun collectionLookupChoosesAndExecutesSearchBeforeReturningAnAnswer() = fixture { context, store ->
+        val original = "I'm trying to figure out the garbage schedule for my new house in Ottawa. I live at 100 Example Avenue."
+        val call = """[tool]{"name":"web_search","arguments":{"query":"Ottawa garbage collection schedule 100 Example Avenue"}}[/tool]"""
+        val engine = ScriptedEngine(call, "The fixture city result says collection is Tuesday: https://example.com/collection")
+        val queries = mutableListOf<String>()
+        val tools = AssistantTools(context, store, webSearch = { queries.add(it); "Fixture city - https://example.com/collection - Collection is Tuesday." })
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        val chat = store.chat(store.newChat(web = true))!!
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), chat, false, YouProfile(preferences = "Use short answers."), original)
+            val raw = runtime.generateTurn(original) { fail("Tool decisions must not stream as a reply") }
+            assertEquals(1, engine.prompts.size) // No prose attempt or reactive retry before execution.
+            val request = runtime.parseAction(raw, original, emptyList(), tools)!!
+            assertEquals("web_search", request.name)
+            val requiredChoices = org.json.JSONObject(engine.forcedSchemas.single()).getJSONArray("oneOf")
+            assertEquals("Clear lookup intent must not offer reply or unrelated tools", 1, requiredChoices.length())
+            assertEquals("web_search", requiredChoices.getJSONObject(0).getJSONObject("properties").getJSONObject("name").getString("const"))
+            val result = tools.execute(chat, request)
+            val answer = runtime.generateToolFollowUp(original, request.name, result) {}
+            assertEquals(listOf("Ottawa garbage collection schedule 100 Example Avenue"), queries)
+            assertTrue(answer.contains("Tuesday"))
+            assertTrue(engine.prompts.last().contains(result))
+            assertEquals("Simple lookup completion must have no tool schema", "", engine.promptSchemas.last())
+            assertTrue(engine.systemPrompt.contains("Use short answers."))
+            assertEquals(1, engine.forcedCalls)
+            assertTrue(engine.remaining.isEmpty())
+            assertFalse(engine.forced)
+            assertTrue("Reply decision must not become an executable capability", TurnDecision.REPLY !in schemaNames(engine))
+        } finally { runtime.release() }
+    }
+
+    @Test fun routingCannotBypassDisabledWebOrApproveWrites() = fixture { context, store ->
+        val engine = ScriptedEngine(TurnDecision.REPLY_CALL, "Enable Web to look up your collection schedule.")
+        val tools = AssistantTools(context, store, webSearch = { error("Web must stay off") })
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), store.chat(store.newChat())!!, false, YouProfile(), "Find the collection schedule")
+            assertTrue(runtime.generateTurn("Find the collection schedule") {}.contains("Enable Web"))
+            assertFalse(engine.forcedSchemas.single().contains("web_search"))
+            assertTrue(store.notes().isEmpty())
+        } finally { runtime.release() }
+    }
+
+    @Test fun progressOnlyReplyFailsWithoutRetryOrPretendingWorkIsRunning() = fixture { context, store ->
+        val engine = ScriptedEngine(TurnDecision.REPLY_CALL, "I am checking the current garbage schedule in Ottawa. Let me know if you need further assistance!")
+        val tools = AssistantTools(context, store, webSearch = { error("No search decision was issued") })
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), store.chat(store.newChat(web = true))!!, false, YouProfile(), "Find the collection schedule")
+            assertTrue(runCatching { runtime.generateTurn("Find the collection schedule") {} }.exceptionOrNull() is UnfinishedReplyException)
+            assertEquals(2, engine.prompts.size)
+            assertFalse(engine.forced)
+        } finally { runtime.release() }
+    }
+
+    @Test fun routedWriteStillRequiresTheExistingApproval() = fixture { context, store ->
+        val engine = ScriptedEngine("""[tool]{"name":"create_note","arguments":{"title":"Packing","body":"Jacket"}}[/tool]""")
+        val tools = AssistantTools(context, store)
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), store.chat(store.newChat())!!, false, YouProfile(), "Save a packing note: Jacket")
+            val raw = runtime.generateTurn("Save a packing note: Jacket") {}
+            val request = runtime.parseAction(raw, "Save a packing note: Jacket", emptyList(), tools)!!
+            assertTrue(tools.needsConfirmation(request))
+            assertTrue(store.notes().isEmpty())
+        } finally { runtime.release() }
+    }
+
+    @Test fun progressAfterSearchCannotFinishAsASuccessfulReply() = fixture { context, store ->
+        val engine = ScriptedEngine("Let me check the garbage schedule in Ottawa.")
+        val tools = AssistantTools(context, store)
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        try {
+            val original = "Find the collection schedule"
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), store.chat(store.newChat(web = true))!!, false, YouProfile(), original)
+            assertTrue(runCatching {
+                runtime.generateToolFollowUp(original, "web_search", """{"status":"success","message":"Fixture city lookup: https://example.com/collection"}""") {}
+            }.exceptionOrNull() is UnfinishedReplyException)
+            assertEquals(1, engine.prompts.size)
+            assertEquals(0, engine.forcedCalls)
+        } finally { runtime.release() }
+    }
+
+    @Test fun searchWithARequestedWriteKeepsTheToolAndApprovalFlow() = fixture { context, store ->
+        val engine = ScriptedEngine("""[tool]{"name":"create_note","arguments":{"title":"Collection","body":"Tuesday"}}[/tool]""")
+        val tools = AssistantTools(context, store)
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        val original = "Search the web for collection dates then save a note about the result"
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), store.chat(store.newChat(web = true))!!, false, YouProfile(), original)
+            val result = """{"status":"success","message":"City collection lookup: Tuesday https://example.com/collection"}"""
+            val raw = runtime.generateToolFollowUp(original, "web_search", result) {}
+            val request = runtime.parseAction(raw, original, listOf(result), tools)!!
+            assertEquals("create_note", request.name)
+            assertTrue(tools.needsConfirmation(request))
+            assertTrue(engine.promptSchemas.single().isNotBlank())
+            assertTrue(store.notes().isEmpty())
+        } finally { runtime.release() }
+    }
+
     @Test fun planCallsCannotInventTimesOrSubstituteImmediateWrites()=fixture { context,store ->
         val tools=AssistantTools(context,store)
         val runtime=AssistantRuntime(context,store,ScriptedEngine()) { web,request,recent,files -> tools.menu(web,request,recent,files) }
@@ -37,14 +137,17 @@ class ToolResponseRecoveryTest {
         var forced = false
         var forcedCalls = 0
         var toolSchema = ""
+        val prompts = mutableListOf<String>()
+        val promptSchemas = mutableListOf<String>()
+        val forcedSchemas = mutableListOf<String>()
         override suspend fun loadModel(pathToModel: String) { state.value = InferenceEngine.State.ModelReady }
         override suspend fun setSystemPrompt(systemPrompt: String) { this.systemPrompt = systemPrompt }
         override suspend fun resetSystemPrompt(systemPrompt: String) { this.systemPrompt = systemPrompt; forced = false }
         override suspend fun countTokens(text: String) = (text.length + 3) / 4
         override suspend fun contextCapacity() = 8192
         override suspend fun setThinking(enabled: Boolean): Boolean { thinking = enabled; return true }
-        override suspend fun setToolSchema(schema: String, force: Boolean) { toolSchema = schema; forced = force; if (force) forcedCalls++ }
-        override fun sendUserPrompt(message: String, predictLength: Int) = flowOf(remaining.removeFirst())
+        override suspend fun setToolSchema(schema: String, force: Boolean) { toolSchema = schema; forced = force; if (force) { forcedCalls++; forcedSchemas.add(schema) } }
+        override fun sendUserPrompt(message: String, predictLength: Int): kotlinx.coroutines.flow.Flow<String> { prompts.add(message); promptSchemas.add(toolSchema); return flowOf(remaining.removeFirst()) }
         override suspend fun bench(pp: Int, tg: Int, pl: Int, nr: Int) = ""
         override fun cleanUp() { state.value = InferenceEngine.State.Initialized }
         override fun destroy() = cleanUp()
@@ -68,7 +171,7 @@ class ToolResponseRecoveryTest {
     }
 
     @Test fun initialGrammarMatchesTheSelectedMenuAndDiscoveryLoadsOtherTools() = fixture { context, store ->
-        val engine = ScriptedEngine("Ready to save your note.")
+        val engine = ScriptedEngine("Which note should I save?")
         val tools = AssistantTools(context, store)
         val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         val chat = store.chat(store.newChat())!!

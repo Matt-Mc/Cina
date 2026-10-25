@@ -20,6 +20,14 @@ class ResponsePolicyTest {
         assertEquals(ResponseMode.QUICK, ResponsePolicy.resolve(ResponseMode.QUICK, "Analyze in detail", goal = true))
         assertEquals(ResponseMode.DEEP, ResponsePolicy.resolve(ResponseMode.DEEP, "Hello"))
     }
+    @Test fun substantialMultiStepRequestsAndLargeAttachmentsUseDeep() {
+        listOf("Build a weekly study plan", "Find the city schedule and save a note", "Read these notes then summarize them").forEach {
+            assertEquals(it, ResponseMode.DEEP, ResponsePolicy.resolve(ResponseMode.AUTO, it))
+        }
+        assertEquals(ResponseMode.DEEP, ResponsePolicy.resolve(ResponseMode.AUTO, "Summarize this file", contextChars = 20_000))
+        assertEquals(ResponseMode.QUICK, ResponsePolicy.resolve(ResponseMode.AUTO, "What is photosynthesis?"))
+        assertEquals(ResponseMode.QUICK, ResponsePolicy.resolve(ResponseMode.QUICK, "Summarize this file", contextChars = 20_000))
+    }
     @Test fun simpleChatDoesNotLoadEveryProcedureButKeepsDiscovery() {
         val prompt = ResponsePolicy.skills(AssistantSkills.builtIns, "Hello")
         assertTrue(prompt.contains("find_skill"))

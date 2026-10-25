@@ -1,0 +1,15 @@
+Real local inference; web responses are test fixtures. Addresses and pickup days below are fictional.
+
+Model: Qwen3-0.6B-Q8_0.gguf
+First decision: [tool]{"name":"web_search","arguments":{"query":"garbage schedule for Ottawa 100 Example Avenue"}}[/tool]
+Executed: web_search
+Continuation: [tool]{"name":"web_search","arguments":{"query":"garbage schedule for Ottawa 100 Example Avenue"}}[/tool]
+Repeated call blocked; final text from confirmed results: The garbage is collected every Tuesday at 100 Example Avenue, Ottawa.
+PASS: search executed and final answer returned
+
+Model: Qwen3-1.7B-Q8_0.gguf
+First decision: [tool]{"name":"web_search","arguments":{"query":"garbage schedule Ottawa 100 Example Avenue"}}[/tool]
+Executed: web_search
+Continuation: The garbage collection for your new house at 100 Example Avenue in Ottawa is scheduled every Tuesday.
+Source: [Example City collection lookup](https://example.com/collection)
+PASS: search executed and final answer returned
