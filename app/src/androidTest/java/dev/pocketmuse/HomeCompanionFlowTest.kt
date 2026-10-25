@@ -3,10 +3,12 @@ package dev.pocketmuse
 import android.util.Base64
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
+import java.io.File
 import org.junit.*
 import org.junit.Assert.*
 
@@ -38,6 +40,30 @@ class HomeCompanionFlowTest {
             compose.runOnIdle { vm.refreshHome() }
             compose.waitUntil(15000) { vm.homeState.value.models.isNotEmpty() }
             assertEquals(config.getString("server_id"), HomeRepository(base).credentials()!!.serverId)
+            compose.onNodeWithContentDescription("Open menu").performClick(); compose.onNodeWithText("Settings").performClick()
+            compose.onNodeWithText("Models").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Choose Home model").performClick()
+            compose.onNodeWithContentDescription("Download qwen3:8b on Home").performScrollTo()
+            File(base.getExternalFilesDir(null), "home-model-download.png").outputStream().use { compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            compose.onNodeWithContentDescription("Download qwen3:8b on Home").performClick()
+            compose.waitUntil(20000) { vm.homeState.value.models.any { it.name == "qwen3:8b" } }
+            assertTrue(repo.jobs().any { it.kind == "download" && it.model == "qwen3:8b" && it.state == "completed" })
+            compose.onAllNodesWithText("Use")[1].performScrollTo().performClick()
+            compose.waitUntil(5000) { vm.homeState.value.deepModel == "qwen3:8b" }
+            assertTrue(vm.homeState.value.hubModels)
+            val hubModel = "hf.co/Qwen/Qwen3-1.7B-GGUF:Qwen3-1.7B-Q8_0.gguf"
+            compose.runOnIdle { vm.openRepo("Qwen/Qwen3-1.7B-GGUF") }
+            compose.waitUntil(30000) { vm.modelFiles.value.repo == "Qwen/Qwen3-1.7B-GGUF" && !vm.modelFiles.value.loading }
+            assertTrue(vm.modelFiles.value.error, vm.modelFiles.value.error.isBlank())
+            compose.onNodeWithText("Download on Home").performScrollTo()
+            File(base.getExternalFilesDir(null), "home-hub-download.png").outputStream().use { compose.onNode(isDialog()).captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            compose.onNodeWithText("Download on Home").performClick()
+            compose.waitUntil(20000) { vm.homeState.value.models.any { it.name == hubModel } }
+            assertTrue(repo.jobs().any { it.kind == "download" && it.model == hubModel && it.state == "completed" })
+            assertFalse(vm.download.value.running)
+            compose.onNodeWithContentDescription("Go back").performClick()
+            compose.onNodeWithText("qwen3:8b").assertIsDisplayed()
+            File(base.getExternalFilesDir(null), "model-choices-connected.png").outputStream().use { compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
             compose.onNodeWithContentDescription("Open menu").performClick(); compose.onNodeWithText("Chat").performClick()
             compose.onNodeWithContentDescription("New chat").performClick()
             compose.runOnIdle { chat = vm.active.value }

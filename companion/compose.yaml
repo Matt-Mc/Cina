@@ -4,7 +4,7 @@ services:
     # One-file deployment: Docker fetches the tested server source itself.
     # For development in a checkout, set CINA_BUILD_CONTEXT=.
     build:
-      context: "${CINA_BUILD_CONTEXT:-https://github.com/Matt-Mc/Cina.git#48c55e19b10c876b83a3429b5809b0254727345e:companion}"
+      context: "${CINA_BUILD_CONTEXT:-https://github.com/Matt-Mc/Cina.git#d1207ba9d0a7d0fd02e6f3ef847144fdb102e459:companion}"
     restart: unless-stopped
     ports:
       - "${CINA_BIND_IP:-127.0.0.1}:${CINA_PORT:-8443}:8443"

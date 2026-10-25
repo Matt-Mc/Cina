@@ -23,7 +23,7 @@ import kotlin.coroutines.coroutineContext
 
 data class RemoteModel(val repo: String, val file: String, val revision: String = "main", val size: Long = -1L) {
     val name get() = file.removeSuffix(".gguf")
-    val url get() = "https://huggingface.co/$repo/resolve/$revision/${file.split('/').joinToString("/") { Uri.encode(it) }}"
+    val url get() = "https://huggingface.co/$repo/resolve/$revision/${ModelChoices.encodePath(file)}"
 }
 
 data class PopularGgufModel(val repo: String, val downloads: Long, val likes: Long, val files: List<RemoteModel>, val recentlyUpdated: Boolean = false)
@@ -43,6 +43,8 @@ class ModelLibrary(private val context: Context, private val store: LocalStore, 
     fun phoneAgentDownloadLimitBytes(): Long = minOf(phoneAgentModelLimitBytes(), freeBytes() * 4 / 5)
     fun isPhoneAgentSize(bytes: Long): Boolean = bytes in MIN_PHONE_AGENT_MODEL_BYTES..phoneAgentModelLimitBytes() && memorySuitability(bytes).startsWith("Likely suitable")
     fun isPhoneAgentDownloadSize(bytes: Long): Boolean = isPhoneAgentSize(bytes) && bytes <= phoneAgentDownloadLimitBytes() && suitability(bytes).startsWith("Likely suitable")
+    internal fun fitsSlot(slot: ModelSlot, bytes: Long): Boolean = ModelChoices.fits(slot, bytes, phoneAgentModelLimitBytes()) && memorySuitability(bytes).startsWith("Likely suitable")
+    internal fun canDownload(slot: ModelSlot, bytes: Long): Boolean = fitsSlot(slot, bytes) && freeBytes() >= bytes * 12 / 10
     fun suitability(bytes: Long): String = when {
         bytes <= 0 -> "Size unknown; check storage and RAM before loading."
         freeBytes() < bytes * 12 / 10 -> "Not enough free storage."
@@ -107,13 +109,7 @@ class ModelLibrary(private val context: Context, private val store: LocalStore, 
 
     suspend fun files(repo: String): List<RemoteModel> = withContext(Dispatchers.IO) {
         require(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$").matches(repo))
-        val array = JSONArray(request("https://huggingface.co/api/models/$repo/tree/main?recursive=true", token = secrets.get("hf")))
-        (0 until array.length()).mapNotNull { index ->
-            val item = array.optJSONObject(index) ?: return@mapNotNull null
-            val path = item.optString("path")
-            if (!path.endsWith(".gguf", true) || Regex("(?i).*-\\d{5}-of-\\d{5}\\.gguf$").containsMatchIn(path)) null
-            else RemoteModel(repo, path, size = item.optLong("size", -1))
-        }
+        ModelChoices.files(repo, request("https://huggingface.co/api/models/$repo/tree/main?recursive=true", token = secrets.get("hf")))
     }
 
     suspend fun import(uri: Uri): LocalModel = withContext(Dispatchers.IO) {

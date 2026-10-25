@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 VERSION = 1
 ACTIVE = {"queued", "running", "pausing", "cancelling"}
 MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*(?::[a-zA-Z0-9_.-]+)?\Z")
+HUB_MODEL = re.compile(r"hf\.co/[A-Za-z0-9_][A-Za-z0-9_-]{0,79}/[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}\.gguf\Z", re.IGNORECASE)
 CATALOG = ["qwen3:4b", "qwen3:8b"]
 
 
@@ -32,6 +33,17 @@ class Problem(Exception):
 
 def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def valid_model(name):
+    if not isinstance(name, str):
+        return False
+    if name.startswith("hf.co/"):
+        if not HUB_MODEL.fullmatch(name):
+            return False
+        # Match the pinned runner's 80-character limit for each name component.
+        return len(name.rsplit(":", 1)[1]) <= 80
+    return len(name) <= 120 and MODEL.fullmatch(name) is not None and "cloud" not in name.lower()
 
 
 class Store:
@@ -131,8 +143,8 @@ class Store:
             raise Problem("A saved UUID is required.")
         if body.get("kind") not in {"analysis", "download", "load", "unload", "delete"}:
             raise Problem("Unsupported job kind.")
-        if not isinstance(body.get("model"), str) or not MODEL.fullmatch(body["model"]) or len(body["model"]) > 120 or "cloud" in body["model"].lower():
-            raise Problem("Use a local model name, without a registry URL or cloud tag.")
+        if not valid_model(body.get("model")):
+            raise Problem("Use a local model name or an exact hf.co/owner/repository:filename.gguf source. Other registries, URLs and cloud models are not supported.")
         if not isinstance(body.get("prompt", ""), str) or len(body.get("prompt", "")) > 24000:
             raise Problem("Analysis context must fit in 24,000 characters.")
         if body["kind"] == "analysis" and not body.get("prompt", "").strip():
@@ -274,7 +286,7 @@ class Service:
     def state(self, owner):
         return {"protocol": VERSION, "server_id": self.store.setting("id"), "name": os.getenv("CINA_NAME", "Home"),
                 "paused": self.store.setting("paused") == "1", "models": self.inventory, "catalog": CATALOG,
-                "runner_error": self.runner_error}
+                "runner_error": self.runner_error, "model_sources": ["ollama", "huggingface"]}
 
     def submit(self, body, owner):
         with self.store.lock:

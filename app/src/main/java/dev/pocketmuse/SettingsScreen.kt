@@ -39,14 +39,11 @@ internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit
 }
 
 @Composable
-internal fun ResponseSettings(vm: AssistantViewModel) {
+internal fun ResponseSettings(vm: AssistantViewModel, onModels: () -> Unit) {
     val mode by vm.responseMode.collectAsState()
-    val models by vm.models.collectAsState()
     val home by vm.homeState.collectAsState()
     val samples by vm.performanceSamples.collectAsState()
-    var assigning by remember { mutableStateOf<ResponseMode?>(null) }
     var showTimings by remember { mutableStateOf(false) }
-    var revision by remember { mutableIntStateOf(0) }
     SectionTitle("Response mode")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ResponseMode.entries.forEach { choice ->
@@ -54,19 +51,9 @@ internal fun ResponseSettings(vm: AssistantViewModel) {
         }
     }
     Text("Auto uses Quick for ordinary requests and Deep for complex work. Quick disables thinking when the model supports it. Both modes can use the same model.", color = Muted, fontSize = 12.sp)
-    listOf(ResponseMode.QUICK, ResponseMode.DEEP).forEach { choice ->
-        val path = remember(revision, models) { vm.assignedModel(choice) }
-        TextButton(onClick = { assigning = choice }) { Text("${choice.name.lowercase().replaceFirstChar { it.uppercase() }} model: ${if(choice == ResponseMode.DEEP && home.deepModel != null) "${home.deepModel} · Home" else models.firstOrNull { it.path == path }?.name ?: "Use selected model"}") }
-    }
+    TextButton(onClick = onModels) { Text("Choose Phone, Heavy phone and Home models") }
     TextButton(onClick = { showTimings = true }) { Text("Response timings · ${samples.size} recent runs") }
-    if(home.deepModel != null) Text("Deep analysis uses Home when reachable. Other requests use your phone model. Once submitted, a Home job stays on Home until its outcome is known.", color = Muted, fontSize = 12.sp)
-    if (assigning != null) AlertDialog(onDismissRequest = { assigning = null }, title = { Text("Choose model") }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
-            if(assigning == ResponseMode.DEEP) home.models.forEach { model -> TextButton(onClick = { vm.assignHomeDeep(model.name); revision++; assigning = null }) { Text("${model.name} · Home analysis") } }
-            TextButton(onClick = { vm.assignModel(assigning!!, null); revision++; assigning = null }) { Text("Use selected model") }
-            models.forEach { model -> TextButton(onClick = { vm.assignModel(assigning!!, model.path); revision++; assigning = null }) { Text(model.name) } }
-        }
-    }, confirmButton = { TextButton(onClick = { assigning = null }) { Text("Close") } })
+    if(home.deepModel != null) Text("Larger analysis can use Home when connected. Your heavy phone model remains available offline.", color = Muted, fontSize = 12.sp)
     if (showTimings) AlertDialog(onDismissRequest = { showTimings = false }, title = { Text("Local response timings") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Milestones are measured from Send. Prompt processing is a duration. No message content is recorded.")

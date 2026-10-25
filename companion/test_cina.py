@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from cina import Handler, Ollama, Problem, Service, Store, ThreadingHTTPServer
+from cina import Handler, Ollama, Problem, Service, Store, ThreadingHTTPServer, valid_model
 
 
 class FakeRunner:
@@ -30,6 +30,23 @@ class FakeRunner:
 
 
 class ContractTests(unittest.TestCase):
+    def test_hub_downloads_are_exact_gguf_sources_on_one_allowed_host(self):
+        name = "hf.co/Qwen/Qwen3-1.7B-GGUF:Qwen3-1.7B-Q8_0.gguf"
+        self.assertTrue(valid_model(name))
+        body = self.body("download")
+        body["model"] = name
+        saved = self.service.submit(body, self.owner)
+        self.assertEqual(name, saved["model"])
+        self.assertIn("huggingface", self.service.state(self.owner)["model_sources"])
+        for invalid in ["https://hf.co/owner/repo:model.gguf", "evil.test/owner/repo:model.gguf", "hf.co/owner/repo:latest",
+                        "hf.co/owner/repo:../secret.gguf", "hf.co/owner/repo:folder/model.gguf", "hf.co/user.name/repo:model.gguf",
+                        "hf.co/owner/repo:" + "x" * 80 + ".gguf", "model:cloud"]:
+            self.assertFalse(valid_model(invalid), invalid)
+            attempt = self.body("download")
+            attempt["model"] = invalid
+            with self.assertRaises(Problem):
+                self.service.submit(attempt, self.owner)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.store = Store(self.directory.name)
@@ -207,6 +224,9 @@ class RunnerProtocolTests(unittest.TestCase):
         self.assertEqual("5m", runner.calls[1][1]["keep_alive"])
         self.assertEqual(0, runner.calls[2][1]["keep_alive"])
         self.assertEqual(("/api/delete", {"model": "qwen3:4b"}, "DELETE"), runner.calls[3])
+        hub = "hf.co/Qwen/Qwen3-1.7B-GGUF:Qwen3-1.7B-Q8_0.gguf"
+        runner.execute({"kind": "download", "model": hub}, lambda *_: None, lambda: False)
+        self.assertEqual(("/api/pull", {"model": hub, "stream": True}, None), runner.calls[4])
 
     def test_output_limit_is_not_reported_as_a_complete_answer(self):
         import io

@@ -2,252 +2,211 @@ package dev.pocketmuse
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-internal fun ModelsScreen(vm: AssistantViewModel) {
+internal fun ModelsScreen(vm: AssistantViewModel, slot: ModelSlot?, onSlot: (ModelSlot?) -> Unit, onConnectHome: () -> Unit) {
     val models by vm.models.collectAsState(); val selected by vm.selectedModel.collectAsState()
-    val home by vm.homeState.collectAsState()
-    val download by vm.download.collectAsState(); val benchmarks by vm.benchmarks.collectAsState()
-    val benchmarking by vm.benchmarking.collectAsState(); val busy by vm.busy.collectAsState()
-    val resumable by vm.resumable.collectAsState(); val repos by vm.repoResults.collectAsState(); val files by vm.remoteFiles.collectAsState()
-    val phoneBenchmarkProgress by vm.phoneBenchmarkProgress.collectAsState()
-    val popularModels by vm.popularModels.collectAsState(); val popularLoading by vm.popularModelsLoading.collectAsState()
-    var tab by rememberSaveable { mutableIntStateOf(if (models.isEmpty() && home.models.isEmpty()) 1 else 0) }
-    var query by rememberSaveable { mutableStateOf("") }
-    var directUrl by rememberSaveable { mutableStateOf("") }; var directName by rememberSaveable { mutableStateOf("") }
-    var hf by remember { mutableStateOf("") }
-    var adding by rememberSaveable { mutableStateOf(false) }
-    var showSearch by rememberSaveable { mutableStateOf(false) }
-    var access by rememberSaveable { mutableStateOf(false) }
-    var viewed by remember { mutableStateOf<LocalModel?>(null) }
-    var deleting by remember { mutableStateOf<LocalModel?>(null) }
-    var assignmentRevision by remember { mutableIntStateOf(0) }
-    val benchmarkableModels = remember(models, vm.library) { models.filter { vm.library.isPhoneAgentSize(it.bytes) } }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.import(uri) }
-    LaunchedEffect(tab) { if (tab == 1 && popularModels.isEmpty()) vm.refreshPopularModels() }
-    Page("Models", "Choose a model for your phone or your Home server.") {
-        ScreenTabs(listOf("Installed", "Discover"), tab) { tab = it }
-        HomeModelRows(vm, tab == 1)
-        Text("${sizeLabel(vm.library.freeBytes())} free · ${sizeLabel(vm.library.totalRam())} memory", color = Muted, fontSize = 12.sp)
-        if (models.isNotEmpty()) Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionTitle("Benchmark for this phone")
-            Text("Tests speed and five practical agent skills on models sized for this phone. Quick needs 4/5 checks and 8+ tokens/s; Deep needs 4/5 and 3+ tokens/s.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-            Button(onClick = vm::benchmarkPhoneModels, enabled = benchmarkableModels.isNotEmpty() && phoneBenchmarkProgress == null && benchmarking == null && !busy && !download.running) {
-                Text(if (phoneBenchmarkProgress != null) "Benchmarking ${phoneBenchmarkProgress!!.first} of ${phoneBenchmarkProgress!!.second}…" else "Benchmark this phone")
+    val assignments by vm.modelAssignments.collectAsState(); val home by vm.homeState.collectAsState()
+    val jobs by vm.homeJobs.collectAsState(); val download by vm.download.collectAsState()
+    val currentJobs = jobs.filter { it.server == home.serverId && it.device == home.deviceId }
+    val resumable by vm.resumable.collectAsState(); val files by vm.modelFiles.collectAsState()
+    var removeHome by remember { mutableStateOf<String?>(null) }
+    HomeRefresh(vm)
+    LaunchedEffect(Unit) { vm.clearStatus() }
+    val phone = models.firstOrNull { it.path == (assignments[ResponseMode.QUICK] ?: selected) }
+    val heavy = models.firstOrNull { it.path == assignments[ResponseMode.DEEP] }
+    key(slot) { Page(slot?.title ?: "Models", slot?.description ?: "Three choices. Choose a model for each kind of work.") {
+        when(slot) {
+            null -> {
+                ModelSlotOverview(phone?.name, heavy?.name, home.deepModel ?: home.selected, home.paired, onSlot)
+                Text("Phone models work offline. Home handles larger analysis when your server is available.", color = Muted, fontSize = 12.sp, lineHeight = 19.sp)
             }
-            phoneBenchmarkProgress?.let { (current, total) ->
-                LinearProgressIndicator(progress = { current.toFloat() / total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth(), color = Accent)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    val currentName = models.firstOrNull { it.path == benchmarking }?.name ?: "Model $current of $total"
-                    Text("$currentName · keep Cina open", Modifier.weight(1f), color = Muted, fontSize = 11.sp)
-                    TextButton(onClick = vm::cancelPhoneBenchmark) { Text("Stop") }
-                }
+            ModelSlot.HOME -> { HomeModelsPane(home, currentJobs, vm::assignHomeDeep,
+                { vm.homeModelAction("download", it) }, { name, loaded -> vm.homeModelAction(if(loaded) "unload" else "load", name) },
+                { removeHome = it }, onConnectHome)
+                if(home.paired && home.hubModels) HubModelSearch(vm, slot)
             }
-            if (benchmarkableModels.isEmpty()) Text("No installed model fits the phone-size agent range yet. Choose a candidate in Discover, then benchmark it here.", color = Muted, fontSize = 12.sp)
+            else -> PhoneModelsPane(vm, slot, if(slot == ModelSlot.PHONE) phone?.path else heavy?.path ?: phone?.path)
         }
-        if (download.running) {
-            Text("Downloading ${download.name}", color = Ink)
+        if(download.running) {
+            Text("Downloading to phone · ${download.name}", color = Ink)
             LinearProgressIndicator(progress = { (download.received.toFloat() / download.total.coerceAtLeast(1)).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth(), color = Accent)
             Text("${sizeLabel(download.received)} of ${sizeLabel(download.total)}", color = Muted, fontSize = 12.sp)
             TextButton(onClick = vm::cancelDownload) { Text("Pause download") }
         }
-        if (download.error.isNotBlank()) Text(download.error, color = MaterialTheme.colorScheme.error)
-        if (resumable != null && !download.running) Button(onClick = { vm.download(resumable!!.first, resumable!!.second) }) { Text("Resume ${resumable!!.second}") }
-        if (tab == 0) {
-            val installedBenchmarks = benchmarks.filter { result -> models.any { it.path == result.modelPath } }
-            val eligibleBenchmarks = installedBenchmarks.filter { result ->
-                val model = models.firstOrNull { it.path == result.modelPath }
-                vm.library.isPhoneAgentSize(model?.bytes ?: -1L) && benchmarkHasAgentChecks(result.result) && (benchmarkTaskScore(result.result) ?: 0) >= 4
+        if(download.error.isNotBlank()) Text(download.error, color = MaterialTheme.colorScheme.error)
+        if(resumable != null && !download.running) TextButton(onClick = { vm.download(resumable!!.first, resumable!!.second) }) { Text("Resume phone download") }
+    } }
+    if(slot != null && files.repo != null) AlertDialog(onDismissRequest = vm::closeModelFiles,
+        containerColor = Paper, title = { Text("Choose a model file") }, text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ModelFileChoices(files, slot, models, download.running,
+                    { if(slot == ModelSlot.HOME) home.hubModels && ModelChoices.homeName(it) != null else vm.library.canDownload(slot, it.size) },
+                    { if(slot == ModelSlot.HOME) ModelChoices.homeName(it) != null else vm.library.fitsSlot(slot, it.size) },
+                    { vm.openRepo(files.repo!!) }, {
+                        if(slot == ModelSlot.HOME) ModelChoices.homeName(it)?.let { name -> vm.homeModelAction("download", name) }
+                        else vm.download(it.url, it.name, slot)
+                        vm.closeModelFiles()
+                    }, homeInstalled = home.models.map { it.name }.toSet(), homePending = currentJobs.filter { it.kind == "download" && !it.terminal }.map { it.model }.toSet())
             }
-            val quickPool = eligibleBenchmarks.filter { (benchmarkTokensPerSecond(it.result) ?: 0.0) >= 8.0 }
-            val deepPool = eligibleBenchmarks.filter { (benchmarkTokensPerSecond(it.result) ?: 0.0) >= 3.0 }
-            val fastest = quickPool.maxByOrNull { benchmarkTokensPerSecond(it.result) ?: -1.0 }
-            val bestOverall = deepPool.maxWithOrNull(compareBy<ModelBenchmark> { benchmarkTaskScore(it.result) ?: -1 }.thenBy { benchmarkTokensPerSecond(it.result) ?: 0.0 })
-            val best = bestOverall?.takeIf { it.modelPath != fastest?.modelPath }
-                ?: deepPool.filter { it.modelPath != fastest?.modelPath }.maxWithOrNull(compareBy<ModelBenchmark> { benchmarkTaskScore(it.result) ?: -1 }.thenBy { benchmarkTokensPerSecond(it.result) ?: 0.0 })
-                ?: bestOverall
-            val assignedQuick = remember(assignmentRevision, models) { vm.assignedModel(ResponseMode.QUICK) }
-            val assignedDeep = remember(assignmentRevision, models) { vm.assignedModel(ResponseMode.DEEP) }
-            if (fastest != null || best != null || installedBenchmarks.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionTitle("Your phone's results")
-                if (installedBenchmarks.any { !benchmarkHasAgentChecks(it.result) }) Text("Some results are from an older benchmark. Run again to check agent skills.", color = Muted, fontSize = 12.sp)
-                fastest?.let { result ->
-                    val model = models.firstOrNull { it.path == result.modelPath }
-                    if (model != null) ModelRoleRow("Quick", model.name, "${benchmarkTokensPerSecond(result.result)?.let { "%.1f".format(it) } ?: "?"} tokens/s · ${benchmarkTaskScore(result.result) ?: "?"}/5 agent checks", assignedQuick == model.path) {
-                        vm.assignModel(ResponseMode.QUICK, model.path); assignmentRevision++
-                    }
-                } ?: Text("Quick: no model cleared 4/5 checks at 8 tokens/s yet.", color = Muted, fontSize = 12.sp)
-                best?.let { result ->
-                    val model = models.firstOrNull { it.path == result.modelPath }
-                    if (model != null) ModelRoleRow("Deep", model.name, "${benchmarkTaskScore(result.result) ?: "?"}/5 agent checks · ${benchmarkTokensPerSecond(result.result)?.let { "%.1f".format(it) } ?: "?"} tokens/s", assignedDeep == model.path) {
-                        vm.assignModel(ResponseMode.DEEP, model.path); assignmentRevision++
-                    }
-                } ?: Text("Deep: no model cleared 4/5 checks at 3 tokens/s yet.", color = Muted, fontSize = 12.sp)
+        }, confirmButton = { TextButton(onClick = vm::closeModelFiles) { Text("Close") } })
+    removeHome?.let { name -> AlertDialog(onDismissRequest = { removeHome = null }, title = { Text("Remove $name from Home?") },
+        text = { Text("You can download it again later. Existing results stay in Work.") },
+        confirmButton = { TextButton(onClick = { vm.homeModelAction("delete", name); removeHome = null }) { Text("Remove") } },
+        dismissButton = { TextButton(onClick = { removeHome = null }) { Text("Cancel") } }) }
+}
+
+@Composable
+internal fun ModelSlotOverview(phone: String?, heavy: String?, home: String?, paired: Boolean, onOpen: (ModelSlot) -> Unit) {
+    val names = mapOf(ModelSlot.PHONE to phone, ModelSlot.HEAVY_PHONE to (heavy ?: phone), ModelSlot.HOME to home?.let(ModelChoices::homeLabel))
+    ModelSlot.entries.forEachIndexed { index, slot ->
+        Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = "Choose ${slot.title}" }
+            .clickable { onOpen(slot) }.padding(vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("0${index + 1}", Modifier.width(36.dp), color = Accent, fontSize = 12.sp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(slot.title, color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                Text(names[slot] ?: if(slot == ModelSlot.HOME && !paired) "Connect your server" else "Choose a model", color = Muted, fontSize = 14.sp)
+                if(slot == ModelSlot.HEAVY_PHONE && heavy == null && phone != null) Text("Using your phone model until you choose another", color = Muted, fontSize = 11.sp)
             }
-            if (models.isEmpty()) {
-                EmptyState("Ready when you are", "Download a recommended model or import a GGUF file to chat offline.")
-                Button(onClick = { tab = 1 }) { Text("Discover models") }
-            }
-            models.forEach { model ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f).clickable { viewed = model }.padding(vertical = 10.dp)) {
-                        Text(model.name, color = Ink, fontWeight = FontWeight.Medium)
-                        Text("Phone · ${sizeLabel(model.bytes)}${if (model.path == selected && home.selected == null) " · Selected" else ""}", color = Muted, fontSize = 12.sp)
-                        if (!vm.library.isPhoneAgentSize(model.bytes)) Text("Outside phone agent benchmark range", color = Muted, fontSize = 11.sp)
-                    }
-                    TextButton(onClick = { if (model.path != selected || home.selected != null) vm.setModel(model.path) else viewed = model }, enabled = benchmarking == null && !busy) { Text(if (model.path == selected && home.selected == null) "Details" else "Use") }
-                }
-                HorizontalDivider(color = Line)
-            }
-            TextButton(onClick = { adding = true }) { Text("+ Add model") }
-        } else {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    SectionTitle("Models people use")
-                    Text("Live Hugging Face list of popular and recently updated models with real downloads. Only single-file options in this phone's practical size range appear.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-                }
-                TextButton(onClick = vm::refreshPopularModels, enabled = !popularLoading) { Text(if (popularLoading) "Loading…" else "Refresh") }
-            }
-            if (popularLoading && popularModels.isEmpty()) LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Accent)
-            val phonePopularModels = remember(popularModels, models, download.running, vm.library) {
-                popularModels.mapNotNull { popular ->
-                    popular.copy(files = popular.files.filter { vm.library.isPhoneAgentDownloadSize(it.size) })
-                        .takeIf { it.files.isNotEmpty() }
-                }
-            }
-            val suitableFiles = phonePopularModels.flatMap { popular -> popular.files.map { popular to it } }
-            val quickLimit = minOf(2_500_000_000L, vm.library.phoneAgentDownloadLimitBytes())
-            val quickPick = suitableFiles.filter { (_, file) -> file.size <= quickLimit }
-                .maxWithOrNull(compareBy<Pair<PopularGgufModel, RemoteModel>> { it.first.downloads }.thenBy { it.second.size })
-                ?: suitableFiles.minByOrNull { it.second.size }
-            val deepPool = suitableFiles.filter { (_, file) -> quickPick != null && file.url != quickPick.second.url && file.size >= quickPick.second.size * 6 / 5 }
-            val deepPick = deepPool.maxWithOrNull(compareBy<Pair<PopularGgufModel, RemoteModel>> { it.first.downloads }.thenBy { it.second.size })
-            quickPick?.let { (popular, file) ->
-                RemoteRoleCard(if(models.isEmpty()) "Phone-size candidate" else "Smaller candidate", popular, file, "A smaller popular model within this phone's estimated limits. It is only a candidate until its speed and agent skills are benchmarked here.") {
-                    vm.download(file.url, file.name)
-                }
-            }
-            deepPick?.let { (popular, file) ->
-                RemoteRoleCard("Larger candidate", popular, file, "A larger weight file that still fits this phone's estimate. It has not been tested on this phone yet.") {
-                    vm.download(file.url, file.name)
-                }
-            }
-            if (quickPick != null && deepPick == null) Text("No larger phone-size candidate is available in the live list. You can benchmark the smaller candidate after downloading it.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
-            if (popularModels.isNotEmpty()) Text("The live list is refreshed from Hub download and update activity. Downloaded models remain candidates until they pass this phone's benchmark.", color = Muted, fontSize = 11.sp, lineHeight = 17.sp)
-            if (popularModels.isEmpty() && !popularLoading) Text("Popular models could not be loaded. Check your connection and refresh, or search Hugging Face below.", color = Muted, fontSize = 12.sp)
-            if (popularModels.isNotEmpty() && phonePopularModels.isEmpty() && !popularLoading) Text("The live models found so far are too small, too large, or too demanding for this phone's agent range. Search for another phone-size option below.", color = Muted, fontSize = 12.sp)
-            phonePopularModels.forEach { popular ->
-                PaperRow("${if (popular.recentlyUpdated) "Recently updated · " else ""}${popular.repo}", "${countLabel(popular.downloads)} downloads · ${countLabel(popular.likes)} likes · ${popular.files.size} phone-size files", "Files") {
-                    vm.openRepo(popular.repo)
-                }
-            }
-            TextButton(onClick = { showSearch = !showSearch }) { Text(if (showSearch) "Hide Hugging Face search" else "Search Hugging Face") }
-            if (showSearch) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(query, { query = it }, label = { Text("Search models") }, modifier = Modifier.weight(1f), singleLine = true)
-                    TextButton(onClick = { vm.searchRepos(query) }, enabled = query.isNotBlank()) { Text("Search") }
-                }
-                repos.forEach { repo -> TextButton(onClick = { vm.openRepo(repo) }) { Text(repo) } }
-                val phoneFiles = files.filter { vm.library.isPhoneAgentDownloadSize(it.size) }
-                if (files.isNotEmpty() && phoneFiles.isEmpty()) Text("No single-file model in this result fits the phone-size agent range. Try another model.", color = Muted, fontSize = 12.sp)
-                phoneFiles.forEach { file -> PaperRow(file.name, "${sizeLabel(file.size)} · ${vm.library.suitability(file.size)}", if (models.any { it.source == file.url }) "Installed" else "Get") {
-                    if (models.none { it.source == file.url }) vm.download(file.url, file.name)
-                } }
-            }
-            TextButton(onClick = { adding = true }) { Text("Import a file or add a link") }
+            Text("›", Modifier.padding(start = 12.dp), color = Accent, fontSize = 26.sp)
         }
-        TextButton(onClick = { access = !access }) { Text(if (access) "Hide model access" else "Model access") }
-        if (access) {
-            Text("A Hugging Face token is only needed for gated models you have access to.", color = Muted, fontSize = 12.sp)
-            OutlinedTextField(hf, { hf = it }, label = { Text("Hugging Face token") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-            Button(onClick = { vm.setKey("hf", hf); hf = "" }, enabled = hf.isNotBlank()) { Text("Save token") }
+        HorizontalDivider(color = Line)
+    }
+}
+
+@Composable
+private fun PhoneModelsPane(vm: AssistantViewModel, slot: ModelSlot, assigned: String?) {
+    val models by vm.models.collectAsState(); val popular by vm.popularModels.collectAsState()
+    val loading by vm.popularModelsLoading.collectAsState()
+    val busy by vm.busy.collectAsState(); val benchmarking by vm.benchmarking.collectAsState()
+    val benchmarks by vm.benchmarks.collectAsState(); val progress by vm.phoneBenchmarkProgress.collectAsState()
+    val download by vm.download.collectAsState()
+    var advanced by rememberSaveable(slot) { mutableStateOf(false) }; var viewed by remember { mutableStateOf<LocalModel?>(null) }
+    var deleting by remember { mutableStateOf<LocalModel?>(null) }; var url by rememberSaveable { mutableStateOf("") }
+    var name by rememberSaveable { mutableStateOf("") }; var token by remember { mutableStateOf("") }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) vm.import(uri) }
+    LaunchedEffect(slot) { if(popular.isEmpty()) vm.refreshPopularModels() }
+    Text("${sizeLabel(vm.library.freeBytes())} free on phone", color = Muted, fontSize = 12.sp)
+    SectionTitle("Downloaded")
+    val suitable = models.filter { vm.library.fitsSlot(slot, it.bytes) || it.path == assigned }.sortedBy { if(slot == ModelSlot.PHONE) it.bytes else -it.bytes }
+    if(suitable.isEmpty()) Text("No suitable model downloaded yet. Choose one below.", color = Muted)
+    suitable.forEach { model ->
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).clickable { viewed = model }.padding(vertical = 10.dp)) {
+                Text(model.name, color = Ink, fontWeight = FontWeight.Medium)
+                Text("${sizeLabel(model.bytes)}${if(model.path == assigned) " · In use" else ""}", color = Muted, fontSize = 12.sp)
+                if(!vm.library.fitsSlot(slot, model.bytes)) Text("Above this choice's estimated size range", color = Muted, fontSize = 11.sp)
+            }
+            TextButton(onClick = { vm.choosePhoneModel(slot, model) }, enabled = model.path != assigned && !busy && benchmarking == null) { Text(if(model.path == assigned) "In use" else "Use") }
         }
+        HorizontalDivider(color = Line)
     }
-    if (adding) AlertDialog(onDismissRequest = { adding = false }, containerColor = Paper, title = { Text("Add a model") },
-        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = { picker.launch(arrayOf("*/*")); adding = false }, modifier = Modifier.fillMaxWidth()) { Text("Import a GGUF file") }
-            Text("Or download from a direct link", color = Muted, fontSize = 12.sp)
-            OutlinedTextField(directUrl, { directUrl = it }, label = { Text("HTTPS GGUF URL") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(directName, { directName = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-        } },
-        confirmButton = { TextButton(onClick = { vm.download(directUrl, directName); adding = false }, enabled = directUrl.startsWith("https://") && directName.isNotBlank()) { Text("Download") } },
-        dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } })
-    viewed?.let { model ->
-        val benchmark = benchmarks.firstOrNull { it.modelPath == model.path }
-        AlertDialog(onDismissRequest = { viewed = null }, containerColor = Paper, title = { Text(model.name) },
-            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(sizeLabel(model.bytes), color = Muted)
-                Text("Five checks cover planning, instruction handling, arithmetic, text judgment, and tool-call formatting. A recommendation needs 4/5 checks; Quick also needs 8+ tokens/s and Deep 3+.", color = Muted, fontSize = 12.sp)
-                if (!vm.library.isPhoneAgentSize(model.bytes)) Text("This file is outside the phone-size range used for agent recommendations.", color = Muted, fontSize = 12.sp)
-                if (benchmark != null) {
-                    val count = benchmarkCheckCount(benchmark.result)
-                    Text("${benchmarkTokensPerSecond(benchmark.result)?.let { "%.1f".format(it) } ?: "?"} tokens/s · ${benchmarkTaskScore(benchmark.result) ?: "?"}/${count ?: "?"} ${if (benchmarkHasAgentChecks(benchmark.result)) "agent checks" else "older checks"}", color = Accent)
-                    Text(benchmark.result, color = Muted, fontSize = 11.sp)
-                }
-                TextButton(onClick = { vm.runBenchmark(model) }, enabled = vm.library.isPhoneAgentSize(model.bytes) && benchmarking == null && !busy && !download.running) { Text(if (benchmarking == model.path) "Testing…" else "Benchmark") }
-                TextButton(onClick = { deleting = model; viewed = null }, enabled = model.path != selected && benchmarking == null && !busy) { Text("Remove model") }
-                if (model.path == selected) Text("Select another model before removing this one.", color = Muted, fontSize = 12.sp)
-            } },
-            confirmButton = { TextButton(onClick = { vm.setModel(model.path); viewed = null }, enabled = benchmarking == null && !busy) { Text(if (model.path == selected) "Done" else "Use model") } })
+    if(slot == ModelSlot.HEAVY_PHONE) Text("A larger phone model can use more memory and battery. The same model can fill both phone choices.", color = Muted, fontSize = 12.sp)
+    HubModelSearch(vm, slot)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("Popular choices to try", Modifier.weight(1f), color = Ink, fontWeight = FontWeight.Medium)
+        TextButton(onClick = vm::refreshPopularModels, enabled = !loading) { Text(if(loading) "Loading…" else "Refresh") }
     }
+    Text("Filtered to this phone's estimated limits. Check speed and answer quality on your phone after downloading.", color = Muted, fontSize = 12.sp)
+    if(loading && popular.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Accent)
+    val candidates = popular.mapNotNull { model -> model.files.filter { vm.library.fitsSlot(slot, it.size) }
+        .sortedWith(compareBy<RemoteModel> { if(it.file.contains("Q4_K_M", true)) 0 else 1 }.thenBy { if(slot == ModelSlot.PHONE) it.size else -it.size })
+        .firstOrNull()?.let { model to it } }.take(8)
+    candidates.forEach { (model, file) ->
+        Text(model.repo, color = Ink, fontWeight = FontWeight.Medium)
+        Text("${sizeLabel(file.size)} · ${file.file.substringAfterLast('/')}", color = Muted, fontSize = 12.sp)
+        Row {
+            val installed = models.any { it.source == file.url }
+            TextButton(onClick = { vm.download(file.url, file.name, slot) }, enabled = !installed && !download.running && vm.library.canDownload(slot, file.size)) { Text(if(installed) "Downloaded" else "Download to phone") }
+            TextButton(onClick = { vm.openRepo(model.repo) }) { Text("Choose file") }
+        }
+        HorizontalDivider(color = Line)
+    }
+    if(candidates.isEmpty() && !loading) Text("Search for a model above or refresh the live list.", color = Muted, fontSize = 12.sp)
+    TextButton(onClick = { advanced = !advanced }) { Text(if(advanced) "Hide more options" else "More options") }
+    if(advanced) {
+        OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Import a GGUF file") }
+        OutlinedTextField(url, { url = it }, label = { Text("HTTPS GGUF link") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(name, { name = it }, label = { Text("Model name") }, modifier = Modifier.fillMaxWidth())
+        TextButton(onClick = { vm.download(url, name, slot) }, enabled = url.startsWith("https://") && name.isNotBlank() && !download.running) { Text("Download to phone") }
+        Text("Hugging Face access token · for gated models you can access", color = Muted, fontSize = 12.sp)
+        OutlinedTextField(token, { token = it }, label = { Text("Hugging Face token") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        TextButton(onClick = { vm.setKey("hf", token); token = "" }, enabled = token.isNotBlank()) { Text("Save token") }
+        TextButton(onClick = vm::benchmarkPhoneModels, enabled = !busy && benchmarking == null && !download.running && models.any { vm.library.isPhoneAgentSize(it.bytes) }) { Text("Check speed and skills") }
+        if(progress != null) { Text("Checking ${progress!!.first} of ${progress!!.second} · keep Cina open", color = Muted); TextButton(onClick = vm::cancelPhoneBenchmark) { Text("Stop") } }
+    }
+    viewed?.let { model -> AlertDialog(onDismissRequest = { viewed = null }, title = { Text(model.name) }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("${sizeLabel(model.bytes)} · ${vm.library.suitability(model.bytes)}")
+            benchmarks.firstOrNull { it.modelPath == model.path }?.let { Text(it.result, fontSize = 12.sp) }
+            TextButton(onClick = { vm.runBenchmark(model) }, enabled = !busy && benchmarking == null && vm.library.isPhoneAgentSize(model.bytes)) { Text("Check speed and skills") }
+            TextButton(onClick = { deleting = model; viewed = null }) { Text("Remove from phone") }
+        }
+    }, confirmButton = { TextButton(onClick = { viewed = null }) { Text("Close") } }) }
     deleting?.let { model -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("Remove ${model.name}?") },
         confirmButton = { TextButton(onClick = { vm.removeModel(model); deleting = null }) { Text("Remove") } },
         dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } }) }
 }
 
 @Composable
-private fun ModelRoleRow(role: String, name: String, detail: String, assigned: Boolean, onAssign: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("$role · $name", color = Ink, fontWeight = FontWeight.Medium)
-            Text(detail, color = Muted, fontSize = 12.sp)
-        }
-        TextButton(onClick = onAssign, enabled = !assigned) { Text(if (assigned) "In use" else "Use") }
+private fun HubModelSearch(vm: AssistantViewModel, slot: ModelSlot) {
+    val repos by vm.repoResults.collectAsState()
+    val loading by vm.modelSearchLoading.collectAsState()
+    val error by vm.modelSearchError.collectAsState()
+    var query by rememberSaveable(slot) { mutableStateOf("") }
+    var searched by rememberSaveable(slot) { mutableStateOf(false) }
+    LaunchedEffect(slot) { vm.clearModelSearch(); searched = false }
+    SectionTitle(if(slot == ModelSlot.HOME) "Hugging Face models" else "Find a model")
+    if(slot == ModelSlot.HOME) Text("Choose a GGUF file to download directly on Home. Private or gated models need access configured on your server.", color = Muted, fontSize = 12.sp)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(query, { query = it }, label = { Text("Search Hugging Face") }, singleLine = true, modifier = Modifier.weight(1f))
+        TextButton(onClick = { searched = true; vm.searchRepos(query.trim()) }, enabled = query.isNotBlank() && !loading) { Text("Search") }
     }
-    HorizontalDivider(color = Line)
+    if(loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Accent)
+    if(error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+    if(searched && !loading && error.isBlank() && repos.isEmpty()) Text("No model repositories found. Try another name.", color = Muted)
+    repos.forEach { repo -> PaperRow(repo, if(slot == ModelSlot.HOME) "Choose a GGUF file for Home" else "Choose a GGUF file for this phone", "Choose file") { vm.openRepo(repo) } }
 }
 
 @Composable
-private fun RemoteRoleCard(role: String, popular: PopularGgufModel, model: RemoteModel, detail: String, onGet: () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(role, color = Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Text(popular.repo, color = Ink, fontWeight = FontWeight.Medium)
-        Text(detail, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-        Text("${sizeLabel(model.size)} · ${model.file.substringAfterLast('/')} · ${countLabel(popular.downloads)} downloads", color = Muted, fontSize = 11.sp)
-        Button(onClick = onGet) { Text("Download to benchmark") }
+internal fun ModelFileChoices(state: ModelFilesState, slot: ModelSlot, installed: List<LocalModel>, downloading: Boolean,
+    canDownload: (RemoteModel) -> Boolean, fits: (RemoteModel) -> Boolean, onRetry: () -> Unit, onDownload: (RemoteModel) -> Unit, homeInstalled: Set<String> = emptySet(), homePending: Set<String> = emptySet()) {
+    Text(state.repo.orEmpty(), color = Ink, fontWeight = FontWeight.Medium)
+    Text(if(slot == ModelSlot.HOME) "Downloads go directly to your Home server." else "Downloads go to your phone for ${slot.title.lowercase()}.", color = Muted, fontSize = 12.sp)
+    if(state.loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Accent)
+    if(state.error.isNotBlank()) { Text(state.error, color = MaterialTheme.colorScheme.error); TextButton(onClick = onRetry) { Text("Try again") } }
+    if(!state.loading && state.error.isBlank()) {
+        val suitable = state.files.filter(fits)
+        if(suitable.isEmpty()) Text(when {
+            state.files.isEmpty() -> "This repository has no supported single-file GGUF models. Try another repository."
+            slot == ModelSlot.HOME -> "Home supports single GGUF files in the repository root, with filenames up to 80 characters. Choose another repository."
+            else -> "No file fits this choice's estimated phone memory limit. Try a smaller model${if(slot == ModelSlot.PHONE) " or Heavy phone model" else ""}."
+        }, color = Muted)
+        suitable.forEach { file ->
+            Text(file.file, color = Ink, fontSize = 13.sp); Text(sizeLabel(file.size), color = Muted, fontSize = 12.sp)
+            val homeName = ModelChoices.homeName(file)
+            val exists = if(slot == ModelSlot.HOME) homeName in homeInstalled else installed.any { it.source == file.url }
+            val pending = slot == ModelSlot.HOME && homeName in homePending
+            Button(onClick = { onDownload(file) }, enabled = !exists && !pending && (slot == ModelSlot.HOME || !downloading) && canDownload(file)) { Text(if(pending) "Queued on Home" else if(exists) "Downloaded" else if(slot == ModelSlot.HOME) "Download on Home" else "Download to phone") }
+            if(!exists && !canDownload(file)) Text(if(slot == ModelSlot.HOME) "This file is not supported by Home's runner." else "Not enough free phone storage for this file.", color = Muted, fontSize = 12.sp)
+            HorizontalDivider(color = Line)
+        }
     }
 }
-
-private fun benchmarkTokensPerSecond(result: String): Double? = Regex("\\| tg 64 \\| ([0-9.]+)").find(result)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
-private fun benchmarkHasAgentChecks(result: String): Boolean = Regex("Cina agent checks: [0-5]/5").containsMatchIn(result)
-private fun benchmarkCheckCount(result: String): Int? = when {
-    benchmarkHasAgentChecks(result) -> 5
-    Regex("Cina task checks: [0-3]/3").containsMatchIn(result) -> 3
-    else -> null
-}
-private fun benchmarkTaskScore(result: String): Int? = Regex("Cina agent checks: ([0-5])/5|Cina task checks: ([0-3])/3")
-    .find(result)?.let { it.groupValues.getOrNull(1)?.takeIf(String::isNotBlank) ?: it.groupValues.getOrNull(2) }?.toIntOrNull()
-
-private fun countLabel(count: Long): String = when {
-    count >= 1_000_000 -> "%.1fM".format(count / 1_000_000.0)
-    count >= 1_000 -> "%.1fK".format(count / 1_000.0)
-    else -> count.toString()
-}
-
 
 internal fun sizeLabel(bytes: Long): String = if(bytes < 0) "Size unknown" else when {
     bytes >= 1_000_000_000L -> "%.1f GB".format(bytes / 1_000_000_000.0)

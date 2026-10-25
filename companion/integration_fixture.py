@@ -15,12 +15,22 @@ from test_cina import FakeRunner
 
 
 class DelayedRunner(FakeRunner):
+    def __init__(self):
+        super().__init__()
+        self.downloaded = {}
+
+    def models(self):
+        return super().models() + list(self.downloaded.values())
+
     def execute(self, job, update, stopped, context):
         for i in range(20):
             if stopped():
                 return ""
-            update("Analysing test passage", "Partial fixture answer")
+            update("Downloading fixture model" if job["kind"] == "download" else "Analysing test passage", "" if job["kind"] == "download" else "Partial fixture answer")
             time.sleep(0.1)
+        if job["kind"] == "download":
+            self.downloaded[job["model"]] = {"name": job["model"], "bytes": 4500000000, "digest": "fixture-downloaded-digest", "loaded": False}
+            return "Model downloaded."
         return "Verified fixture answer"
 
 

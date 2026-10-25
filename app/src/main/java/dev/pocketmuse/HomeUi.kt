@@ -6,6 +6,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,39 +60,58 @@ import kotlinx.coroutines.delay
     }, confirmButton = { TextButton(onClick = { vm.disconnectHome(); disconnect = false }) { Text("Disconnect") } }, dismissButton = { TextButton(onClick = { disconnect = false }) { Text("Keep connected") } })
 }
 
-@Composable internal fun HomeModelRows(vm: AssistantViewModel, discover: Boolean) {
-    val home by vm.homeState.collectAsState()
-    val jobs by vm.homeJobs.collectAsState()
-    var remove by remember { mutableStateOf<String?>(null) }
-    var custom by remember { mutableStateOf("") }
-    if (!home.paired) return
-    HomeRefresh(vm)
-    Text(home.name, color = Ink, fontWeight = FontWeight.Medium)
-    Text("Home models answer and analyse. Use a phone model for device actions and connected tools. Work continues when you close Cina.", color = Muted, fontSize = 12.sp)
-    if (!home.online) Text(home.detail, color = Muted, fontSize = 12.sp)
-    if(discover) {
-        Text("Start with 4B on an 8 GB graphics card; test 8B after that. Speed and memory use depend on your hardware.", color = Muted, fontSize = 12.sp)
-        home.catalog.forEach { name -> PaperRow(name, "Home · local model download", if(home.models.any { it.name == name }) "Installed" else "Get") {
-            if(home.models.none { it.name == name }) vm.homeModelAction("download", name)
-        } }
-        OutlinedTextField(custom, { custom = it }, label = { Text("Local Ollama model name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        TextButton(onClick = { vm.homeModelAction("download", custom.trim()); custom = "" }, enabled = custom.matches(Regex("[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}"))) { Text("Download on Home") }
-        Text("Downloads and their progress appear in Work.", color = Muted, fontSize = 12.sp)
-    } else {
-        if(home.models.isEmpty()) Text("No Home models installed. Find one in Discover.", color = Muted)
-        home.models.forEach { model ->
-            val inUse = jobs.any { it.model == model.name && it.state in setOf("waiting", "queued", "running", "pausing", "cancelling") }
-            PaperRow(model.name, "Home · ${sizeLabel(model.bytes)}${if(model.loaded) " · Loaded" else ""}", if(home.selected == model.name) "Selected" else "Use") { vm.setHomeModel(model.name) }
-            Row {
-                TextButton(onClick = { vm.assignHomeDeep(if(home.deepModel == model.name) null else model.name) }) { Text(if(home.deepModel == model.name) "Deep model ✓" else "Use for Deep") }
-                TextButton(onClick = { vm.homeModelAction(if(model.loaded) "unload" else "load", model.name) }, enabled = !inUse) { Text(if(model.loaded) "Unload" else "Load") }
-                TextButton(onClick = { remove = model.name }, enabled = !inUse && home.selected != model.name && home.deepModel != model.name) { Text("Remove") }
-            }
+@Composable internal fun HomeModelsPane(home: HomeState, jobs: List<HomeJob>, onSelect: (String?) -> Unit,
+    onDownload: (String) -> Unit, onLoad: (String, Boolean) -> Unit, onRemove: (String) -> Unit, onConnect: () -> Unit) {
+    val uri = LocalUriHandler.current
+    var more by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    if(!home.paired) {
+        Text("Connect your Home server to download and use larger models.", color = Muted)
+        Button(onClick = onConnect) { Text("Connect Home") }
+        return
+    }
+    Text(if(home.online) "Connected to ${home.name}" else home.detail.ifBlank { "Home is offline. Saved requests wait for it to reconnect." }, color = Muted, fontSize = 12.sp)
+    Text("Downloads go directly to your server. Your phone stays free for everyday and offline work.", color = Muted, fontSize = 12.sp)
+    if(!home.hubModels) {
+        Text("Update Home to enable Hugging Face downloads. Your saved models and paired phone stay in place.", color = Muted, fontSize = 12.sp)
+        TextButton(onClick = { uri.openUri("https://github.com/Matt-Mc/Cina/blob/main/companion/README.md#update") }) { Text("Home update instructions") }
+    }
+    SectionTitle("Downloaded on Home")
+    if(home.models.isEmpty()) Text("No Home models yet. Download one below.", color = Muted)
+    home.models.forEach { model ->
+        val selected = model.name == (home.deepModel ?: home.selected)
+        val inUse = jobs.any { it.model == model.name && !it.terminal && it.state !in setOf("failed", "paused", "interrupted") }
+        PaperRow(ModelChoices.homeLabel(model.name), "${sizeLabel(model.bytes)}${if(model.name.startsWith("hf.co/")) " · Hugging Face" else ""}${if(model.loaded) " · Loaded" else ""}", if(selected) "In use" else "Use") { onSelect(model.name) }
+        Row {
+            TextButton(onClick = { onLoad(model.name, model.loaded) }, enabled = !inUse) { Text(if(model.loaded) "Unload" else "Load") }
+            TextButton(onClick = { onRemove(model.name) }, enabled = !inUse && !selected && home.selected != model.name) { Text("Remove") }
         }
     }
-    HorizontalDivider(color = Line)
-    remove?.let { name -> AlertDialog(onDismissRequest = { remove = null }, title = { Text("Remove $name from Home?") }, text = { Text("You can download it again later. Existing results stay in Work.") },
-        confirmButton = { TextButton(onClick = { vm.homeModelAction("delete", name); remove = null }) { Text("Remove") } }, dismissButton = { TextButton(onClick = { remove = null }) { Text("Cancel") } }) }
+    SectionTitle("Choose a Home model")
+    Text("Try the smaller choice first on a midrange server. Larger models need more memory.", color = Muted, fontSize = 12.sp)
+    home.catalog.ifEmpty { listOf("qwen3:4b", "qwen3:8b") }.filter { candidate -> home.models.none { it.name == candidate } }.forEach { candidate ->
+        HomeDownloadChoice(candidate, jobs, onDownload)
+    }
+    TextButton(onClick = { more = !more }) { Text(if(more) "Hide more Home models" else "More Home models") }
+    if(more) {
+        Text("Enter a local Ollama model name, for example qwen3:4b.", color = Muted, fontSize = 12.sp)
+        OutlinedTextField(name, { name = it }, label = { Text("Home model name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        Button(onClick = { onDownload(name.trim()); name = "" }, enabled = ModelChoices.validHomeName(name.trim()) &&
+            home.models.none { it.name == name.trim() } && jobs.none { it.kind == "download" && it.model == name.trim() && !it.terminal }) { Text("Download on Home") }
+    }
+    Text("Follow downloads in Work. Once downloaded, tap Use here. Home handles eligible larger analysis when connected; device actions use your phone.", color = Muted, fontSize = 12.sp)
+}
+
+@Composable private fun HomeDownloadChoice(name: String, jobs: List<HomeJob>, onDownload: (String) -> Unit) {
+    val pending = jobs.firstOrNull { it.kind == "download" && it.model == name && !it.terminal }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(name, color = Ink, fontWeight = FontWeight.Medium)
+        if(pending != null) {
+            Text("${pending.state.replaceFirstChar(Char::uppercase)} · ${pending.error.ifBlank { pending.snapshot.optString("detail") }}", color = Muted, fontSize = 12.sp)
+            Text("Progress and controls are in Work.", color = Muted, fontSize = 12.sp)
+        } else Button(onClick = { onDownload(name) }, modifier = Modifier.semantics { contentDescription = "Download $name on Home" }) { Text("Download on Home") }
+        HorizontalDivider(color = Line)
+    }
 }
 
 @Composable internal fun HomeWorkRows(vm: AssistantViewModel, attention: Boolean = false) {

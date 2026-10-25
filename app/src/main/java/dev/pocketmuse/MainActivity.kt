@@ -169,6 +169,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
     var taskTab by rememberSaveable { mutableIntStateOf(4) }
     var librarySource by rememberSaveable { mutableStateOf<String?>(null) }
     var menuOpen by rememberSaveable { mutableStateOf(false) }
+    var modelSlot by rememberSaveable { mutableStateOf<String?>(null) }
     val pageState = rememberSaveableStateHolder()
     val status by vm.status.collectAsState()
     val pending by vm.pending.collectAsState()
@@ -190,7 +191,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
     }
     fun back() {
         page = when (page) {
-            "Models" -> modelReturnPage
+            "Models" -> if(modelSlot != null) { modelSlot = null; "Models" } else modelReturnPage
             "Companion" -> companionReturnPage
             "Connections", "Skills", "Chat preferences", "About", "Response settings" -> "Settings"
             "Edit profile" -> "You"
@@ -223,7 +224,7 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                 pageState.SaveableStateProvider(destination) {
                     when (destination) {
                         "Chat" -> ChatScreen(vm,
-                            onModels = { modelReturnPage = "Chat"; page = "Models" },
+                            onModels = { modelReturnPage = "Chat"; modelSlot = null; page = "Models" },
                             onMenu = { menuOpen = true }, onCompanion = { companionReturnPage = "Chat"; page = "Companion" },
                             widgetDraft = widgetDraft, widgetDraftKey = widgetDraftKey)
                         "Tasks" -> TasksScreen(vm, taskTab, { taskTab = it }, onOpenChat = { page = "Chat" }, onOpenResult = { kind -> vm.refresh();if(kind=="note") page="Notes" else taskTab=1 })
@@ -235,15 +236,15 @@ private fun CinaApp(vm: AssistantViewModel, availableUpdate: AppUpdate?, updateS
                         "Library storage" -> if (BuildConfig.INBOX_ENABLED) LibraryStorageScreen(onBack = { page = "Library" })
                         "You" -> YouScreen(vm, onEditProfile = { page = "Edit profile" }, onOpenChat = { page = "Chat" })
                         "Edit profile" -> ProfileEditor(profile, onSave = { vm.saveYouProfile(it); page = "You" })
-                        "Models" -> ModelsScreen(vm)
+                        "Models" -> ModelsScreen(vm, modelSlot?.let { ModelSlot.valueOf(it) }, { modelSlot = it?.name }, onConnectHome = { page = "Connections" })
                         "Skills" -> SkillsScreen(vm)
                         "Connections" -> ConnectionsScreen(vm)
                         "Companion" -> Page("Appearance", "Make Cina your own.") { CompanionSettings(profile, vm::saveCompanionSettings) }
-                        "Response settings" -> Page("Responses", "Choose speed, model, and level of detail.") { ResponseSettings(vm) }
+                        "Response settings" -> Page("Responses", "Choose speed and level of detail.") { ResponseSettings(vm, onModels = { modelReturnPage = "Response settings"; modelSlot = null; page = "Models" }) }
                         "Chat preferences" -> ChatPreferencesScreen(vm)
                         "About" -> AboutScreen(updateStatus, onCheckUpdates)
                         else -> SettingsScreen(vm, onNavigate = {
-                            if (it == "Models") modelReturnPage = "Settings"
+                            if (it == "Models") { modelReturnPage = "Settings"; modelSlot = null }
                             if (it == "Companion") companionReturnPage = "Settings"
                             page = it
                         })
