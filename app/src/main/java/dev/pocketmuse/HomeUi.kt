@@ -114,12 +114,12 @@ import kotlinx.coroutines.delay
     }
 }
 
-@Composable internal fun HomeWorkRows(vm: AssistantViewModel, attention: Boolean = false) {
+@Composable internal fun HomeWorkRows(vm: AssistantViewModel, attention: Boolean = false, focusId: String? = null) {
     val jobs by vm.homeJobs.collectAsState()
     val home by vm.homeState.collectAsState()
     var viewed by remember { mutableStateOf<String?>(null) }
     var showOlder by remember { mutableStateOf(false) }
-    val shown = jobs.filter { (it.state in setOf("failed", "interrupted") || it.error.isNotBlank()) == attention }
+    val shown = jobs.filter { if(focusId!=null) it.id==focusId else (it.state in setOf("failed", "interrupted") || it.error.isNotBlank()) == attention }
     HomeRefresh(vm)
     (if(showOlder) shown else shown.take(30)).forEach { job -> OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
         Text(job.title, color = Ink, fontWeight = FontWeight.Medium)

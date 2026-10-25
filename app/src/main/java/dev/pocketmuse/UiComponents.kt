@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.sp
 import java.util.Calendar
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.text.style.TextOverflow
 
 internal val Paper = Color(0xFFFAF9F6)
 internal val Ink = Color(0xFF26312C)
@@ -31,22 +33,22 @@ internal val Warm = Color(0xFFF4F0E9)
 
 @Composable
 internal fun Page(title: String, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        Text(title, fontFamily = FontFamily.Serif, fontSize = 31.sp, color = Ink)
+    Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) { Column(Modifier.widthIn(max=840.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Text(title, fontFamily = FontFamily.Serif, fontSize = 31.sp, color = Ink,modifier=Modifier.semantics { heading() })
         if(subtitle != null) Text(subtitle, color = Muted, fontSize = 14.sp, lineHeight = 21.sp)
         Spacer(Modifier.height(4.dp))
         content()
         Spacer(Modifier.height(24.dp))
-    }
+    } }
 }
 
 @Composable
-internal fun SectionTitle(text: String) { Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Ink) }
+internal fun SectionTitle(text: String) { Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Ink,modifier=Modifier.semantics { heading() }) }
 
 @Composable
 internal fun PaperRow(title: String, detail: String, action: String, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(title, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium); Spacer(Modifier.height(3.dp)); Text(detail, color = Muted, fontSize = 12.sp, lineHeight = 18.sp) }
+        Column(Modifier.weight(1f)) { Text(title, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Medium); Spacer(Modifier.height(3.dp)); Text(detail, color = Muted, fontSize = 14.sp, lineHeight = 18.sp) }
         Spacer(Modifier.width(8.dp)); TextButton(onClick = onClick) { Text(action) }
     }
     HorizontalDivider(color = Line)
@@ -55,14 +57,14 @@ internal fun PaperRow(title: String, detail: String, action: String, onClick: ()
 
 @Composable
 internal fun NavigationRow(title: String, detail: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).clickable(onClick = onClick)
-        .padding(horizontal = 18.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).clickable(role=androidx.compose.ui.semantics.Role.Button,onClick = onClick)
+        .heightIn(min=64.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text(title, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text(title, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Medium,maxLines=3,overflow=TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            Text(detail, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Text(detail, color = Muted, fontSize = 14.sp, lineHeight = 18.sp)
         }
-        Text("›", color = Muted, fontSize = 24.sp, modifier = Modifier.padding(start = 12.dp))
+        CinaIcon("›",Modifier.padding(start=12.dp).size(20.dp),Muted)
     }
 }
 
@@ -71,7 +73,7 @@ internal fun SettingToggle(title: String, detail: String, checked: Boolean, onCh
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, color = Ink, fontWeight = FontWeight.Medium)
-            Text(detail, color = Muted, fontSize = 12.sp)
+            Text(detail, color = Muted, fontSize = 14.sp)
         }
         Switch(checked, onCheckedChange = onChange, modifier = Modifier.semantics { contentDescription = title })
     }

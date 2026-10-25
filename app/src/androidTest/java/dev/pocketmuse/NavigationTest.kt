@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.espresso.Espresso.closeSoftKeyboard
+import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -16,8 +17,11 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.graphics.asAndroidBitmap
 import java.io.File
 import org.junit.Rule
@@ -82,17 +86,37 @@ class NavigationTest {
         }
         capture("consolidated-menu.png")
         compose.onNodeWithText("Library").performClick()
-        listOf("Inbox", "Notes", "Knowledge & projects", "Memory").forEach { compose.onNodeWithText(it).assertIsDisplayed() }
+        awaitLibraryReady()
+        listOf("Inbox", "Notes", "Knowledge & projects", "Memory").forEach {
+            compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText(it))
+            try {
+                compose.onNodeWithText(it).performScrollTo().assertIsDisplayed()
+            } catch (failure: AssertionError) {
+                throw AssertionError("Library destination '$it' is not visible. UI=${compose.onRoot().printToString()}", failure)
+            }
+        }
         capture("consolidated-library.png")
-        compose.onNodeWithText("Notes").performClick()
+        compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText("Manage notes"))
+        compose.onNodeWithText("Manage notes").performClick()
         compose.onNodeWithContentDescription("Go back").performClick()
+        awaitLibraryReady()
+        compose.onNodeWithContentDescription("Saved library items").performScrollToNode(hasText("Knowledge & projects"))
         compose.onNodeWithText("Knowledge & projects").assertIsDisplayed()
+    }
+
+    private fun awaitLibraryReady() {
+        compose.onNodeWithContentDescription("Saved library items").assertExists()
+        lateinit var library: LibraryViewModel
+        compose.runOnIdle { library = ViewModelProvider(compose.activity)[LibraryViewModel::class.java] }
+        // Loading can insert rows above Browse and move a target immediately after scrolling.
+        compose.waitUntil(10_000) { !library.loading.value }
+        compose.waitForIdle()
     }
 
     @Test fun openingModelManagementPreservesChatDraftAndUsesCompactActions() {
         val draft = "Help me plan a weekend walk"
         compose.onNodeWithContentDescription("Message Cina").performTextInput(draft)
-        compose.onNodeWithText("Choose a model ⌄").performClick()
+        compose.onNodeWithText("Auto ⌄").performClick()
         compose.onNodeWithText("Manage models").performClick()
         compose.onNodeWithText("Models").assertIsDisplayed()
         compose.onNodeWithContentDescription("Go back").performClick()
@@ -123,7 +147,7 @@ class NavigationTest {
         compose.onNodeWithContentDescription("Open menu").performClick()
         compose.onNodeWithText("Settings").performClick()
         compose.onNodeWithText("About you").performClick()
-        compose.onNodeWithText("About you").assertIsSelected()
+        compose.onNodeWithText("How Cina should help").assertIsDisplayed()
     }
 }
 

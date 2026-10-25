@@ -18,7 +18,7 @@ class ModelPickerNavigationTest {
         compose.onNodeWithContentDescription("Open menu").performClick()
         compose.onNodeWithText("Settings").performClick()
         compose.onNodeWithText("Models").performScrollTo().performClick()
-        listOf("Phone model", "Heavy phone model", "Home model").forEach { compose.onNodeWithText(it).assertIsDisplayed() }
+        listOf("Phone model", "Heavy phone model", "Home model").forEach { compose.onNodeWithContentDescription("Choose $it").assertIsDisplayed() }
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         File(base.getExternalFilesDir(null), "model-choices.png").outputStream().use { stream ->
             compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)

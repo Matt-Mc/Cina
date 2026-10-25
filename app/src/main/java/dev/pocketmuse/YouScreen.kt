@@ -30,13 +30,13 @@ private val wash = Color(0xFFF0F2EC)
 private val border = Color(0xFFE7E9E2)
 
 @Composable
-internal fun YouScreen(vm: AssistantViewModel, onEditProfile: () -> Unit, onOpenChat: () -> Unit) {
+internal fun YouScreen(vm: AssistantViewModel, onEditProfile: () -> Unit, onMemory: () -> Unit) {
     val profile by vm.youProfile.collectAsState()
     val suggestions by vm.memorySuggestions.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var preferences by rememberSaveable(profile.preferences) { mutableStateOf(profile.preferences) }
     Page("You", "The details you choose to share with Cina.") {
-        ScreenTabs(listOf("About you", "Memory"), tab) { tab = it }
+
         if (tab == 0) {
             Column(Modifier.fillMaxWidth().background(wash, RoundedCornerShape(20.dp)).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -52,9 +52,9 @@ internal fun YouScreen(vm: AssistantViewModel, onEditProfile: () -> Unit, onOpen
             OutlinedTextField(preferences, { preferences = it.take(500) }, label = { Text("Response preferences") },
                 placeholder = { Text("Short answers, gentle reminders, favourite topics…") }, minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth())
             if (preferences != profile.preferences) Button(onClick = { vm.saveYouProfile(profile.copy(preferences = preferences)) }) { Text("Save preferences") }
-            NavigationRow("Memory", if (suggestions.isEmpty()) "Review what Cina remembers" else "${suggestions.size} suggested ${if (suggestions.size == 1) "memory" else "memories"} to review") { tab = 1 }
+            NavigationRow("Memory", if (suggestions.isEmpty()) "Review what Cina remembers" else "${suggestions.size} suggested ${if (suggestions.size == 1) "memory" else "memories"} to review") { onMemory() }
             Text("Profile details and approved memories help personalize future chats. They are stored on this phone.", color = quiet, fontSize = 12.sp)
-        } else MemoryContent(vm, onOpenChat)
+        }
     }
 }
 
@@ -91,7 +91,7 @@ fun CompanionSettings(profile: YouProfile, onSave: (YouProfile) -> Unit) {
         Text("Colour", color = dark, fontWeight = FontWeight.Medium)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             petColors.forEachIndexed { index, color ->
-                Box(Modifier.size(38.dp).clip(CircleShape).background(color)
+                Box(Modifier.size(48.dp).clip(CircleShape).background(color)
                     .border(if(draft.petCustomColor.isEmpty() && draft.petColor == index) 3.dp else 1.dp, if(draft.petCustomColor.isEmpty() && draft.petColor == index) dark else border, CircleShape)
                     .semantics { contentDescription = "Colour ${index + 1}" }
                     .selectable(selected = draft.petCustomColor.isEmpty() && draft.petColor == index,

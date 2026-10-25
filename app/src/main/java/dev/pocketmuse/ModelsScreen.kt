@@ -18,20 +18,41 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-internal fun ModelsScreen(vm: AssistantViewModel, slot: ModelSlot?, onSlot: (ModelSlot?) -> Unit, onConnectHome: () -> Unit) {
+internal fun ModelsScreen(vm: AssistantViewModel, slot: ModelSlot?, onSlot: (ModelSlot?) -> Unit, onConnectHome: () -> Unit, setup: Boolean = false, onReady: () -> Unit = {}) {
     val models by vm.models.collectAsState(); val selected by vm.selectedModel.collectAsState()
     val assignments by vm.modelAssignments.collectAsState(); val home by vm.homeState.collectAsState()
     val jobs by vm.homeJobs.collectAsState(); val download by vm.download.collectAsState()
     val currentJobs = jobs.filter { it.server == home.serverId && it.device == home.deviceId }
     val resumable by vm.resumable.collectAsState(); val files by vm.modelFiles.collectAsState()
+    var browse by rememberSaveable { mutableStateOf(false) }
+    var starterRequested by rememberSaveable { mutableStateOf(false) }
+    val popular by vm.popularModels.collectAsState()
+    val loadingStarter by vm.popularModelsLoading.collectAsState()
+    LaunchedEffect(setup) { if(setup && models.isEmpty()) vm.refreshPopularModels() }
+    LaunchedEffect(models,selected,starterRequested,setup,browse) { if(setup && (starterRequested || browse) && models.any { it.path==selected }) onReady() }
     var removeHome by remember { mutableStateOf<String?>(null) }
     HomeRefresh(vm)
     LaunchedEffect(Unit) { vm.clearStatus() }
     val phone = models.firstOrNull { it.path == (assignments[ResponseMode.QUICK] ?: selected) }
     val heavy = models.firstOrNull { it.path == assignments[ResponseMode.DEEP] }
-    key(slot) { Page(slot?.title ?: "Models", slot?.description ?: "Three choices. Choose a model for each kind of work.") {
+    key(slot) { Page(slot?.title ?: "Models", slot?.description ?: if(setup && models.isEmpty() && !browse) "Get Cina ready" else "Start with your phone. Other choices are optional.") {
         when(slot) {
-            null -> {
+            null -> if(setup && models.isEmpty() && !browse) {
+                Text("One phone model is enough to get started. It works offline after downloading.",color=Muted)
+                val choice=starterChoice(popular) { vm.library.canDownload(ModelSlot.PHONE,it.size) && vm.library.isPhoneAgentSize(it.size) }
+                when {
+                    loadingStarter -> { LinearProgressIndicator(Modifier.fillMaxWidth(),color=Accent);Text("Finding a starting option for this phone…",color=Muted) }
+                    choice!=null -> {
+                        SectionTitle("Starting option")
+                        Text(choice.name,color=Ink,fontWeight=FontWeight.Medium)
+                        Text("${sizeLabel(choice.size)} download · keep ${sizeLabel(choice.size*12/10)} free",color=Muted)
+                        Text("Selected from popular text models within this phone's estimated memory and storage limits. Speed and answer quality still depend on your phone.",color=Muted)
+                        Button(onClick={ starterRequested=true;vm.download(choice.url,choice.name,ModelSlot.PHONE) },enabled=!download.running) { Text("Download & get started") }
+                    }
+                    else -> { Text("Couldn't establish a suitable starting option. Check your connection or browse other models.",color=Muted);TextButton(onClick=vm::refreshPopularModels) { Text("Try again") } }
+                }
+                TextButton(onClick={ browse=true;onSlot(ModelSlot.PHONE) }) { Text("Browse other models") }
+            } else {
                 ModelSlotOverview(phone?.name, heavy?.name, home.deepModel ?: home.selected, home.paired, onSlot)
                 Text("Phone models work offline. Home handles larger analysis when your server is available.", color = Muted, fontSize = 12.sp, lineHeight = 19.sp)
             }
@@ -78,7 +99,7 @@ internal fun ModelSlotOverview(phone: String?, heavy: String?, home: String?, pa
             .clickable { onOpen(slot) }.padding(vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("0${index + 1}", Modifier.width(36.dp), color = Accent, fontSize = 12.sp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(slot.title, color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                Text(slot.title + if(slot!=ModelSlot.PHONE) " · optional" else "", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 Text(names[slot] ?: if(slot == ModelSlot.HOME && !paired) "Connect your server" else "Choose a model", color = Muted, fontSize = 14.sp)
                 if(slot == ModelSlot.HEAVY_PHONE && heavy == null && phone != null) Text("Using your phone model until you choose another", color = Muted, fontSize = 11.sp)
             }

@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-25",
+  "timezone": "America/Toronto",
+  "platform": "Android 16 x86_64 disposable emulator",
+  "unitTests": 78,
+  "unitFailures": 0,
+  "portraitUiTests": 27,
+  "largeTextChecks": 3,
+  "landscapeChecks": 2,
+  "setupCompletionRecheck": 1,
+  "lintErrors": 0,
+  "lintWarnings": 83,
+  "portraitDp": "360x800",
+  "landscapeDp": "800x360",
+  "textScale": 2.0,
+  "verificationApkSha256": "83A302C4CDD91A70A9D22EA11B818977C5545809962214C11646C699D51EDA94",
+  "normalUiPassed": true,
+  "largeTextPassed": true,
+  "landscapePassed": true,
+  "policyCoverageRestored": true
+}

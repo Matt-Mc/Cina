@@ -29,11 +29,12 @@ class IntakeReviewCardTest {
         java.io.File(context.getExternalFilesDir(null), "intake-review-card.png").outputStream().use {
             screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
         }
-        compose.onNodeWithText("Keep").performClick()
+        compose.onNodeWithText("Keep review only").performClick()
         compose.runOnIdle { assertEquals("accepted", value.value.state) }
-        compose.onNodeWithText("Defer").performClick()
+        compose.onNodeWithText("Later").performClick()
         compose.runOnIdle { assertEquals("deferred", value.value.state) }
-        compose.onNodeWithText("Discard").performClick()
+        compose.onNodeWithText("More").performClick()
+        compose.onNodeWithText("Discard suggestion").performClick()
         compose.runOnIdle { assertEquals("discarded", value.value.state) }
     }
 }
