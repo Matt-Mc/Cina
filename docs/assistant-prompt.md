@@ -8,7 +8,12 @@ Cina should do the requested work directly, ask a focused question when necessar
 and use local or connected tools for actions it can perform. Web being enabled
 allows search; it does not require search. Search should support an answer rather
 than replace it with a list of apps or resources. Tool follow-ups repeat the
-original request so Cina keeps working toward it.
+original request so Cina keeps working toward it. Web continuations now retain tools:
+`web_read` can read public page text and links when a search snippet lacks the answer.
+Finding a portal is not completion. Cina should continue reading or refining the search,
+then provide verified details with sources, or identify a specific access limitation.
+The reader cannot run JavaScript, log in, or submit address forms. See
+[lookup completion changes](web-answer-completion-2026-10-25.md).
 
 The base prompt uses seven short rules. Trusted response preferences are separate from source data. One typed catalog supplies selected instructions, validation, labels, and action schemas. Selection includes recent user requests and file presence; scheduled work always receives its complete local allowlist and the actual scheduled request. Web and memory execution are still checked against current settings.
 

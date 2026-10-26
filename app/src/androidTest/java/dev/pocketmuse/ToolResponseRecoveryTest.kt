@@ -13,10 +13,45 @@ import java.io.File
 
 /** Deterministic runtime tests: model responses are scripted; parsing, storage and tools are real. */
 class ToolResponseRecoveryTest {
+    @Test fun searchPortalCanBeReadBeforeGivingTheConcreteAnswer() = fixture { context, store ->
+        val original = "Search the web for the collection schedule at 100 Example Avenue, Ottawa"
+        val search = """[tool]{"name":"web_search","arguments":{"query":"100 Example Avenue Ottawa collection schedule"}}[/tool]"""
+        val read = """[tool]{"name":"web_read","arguments":{"url":"https://example.com/collection"}}[/tool]"""
+        val engine = ScriptedEngine(search, read, TurnDecision.REPLY_CALL,
+            "For 100 Example Avenue, collection is Tuesday. Source: https://example.com/collection")
+        val visited = mutableListOf<String>()
+        val tools = AssistantTools(context, store,
+            webSearch = { "City collection lookup: https://example.com/collection. Enter your address for the schedule." },
+            webRead = { visited.add(it); "Source: $it\n100 Example Avenue, Ottawa: collection is Tuesday." })
+        val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
+        val chat = store.chat(store.newChat(web = true))!!
+        try {
+            runtime.use(LocalModel(0, "Scripted", "scripted.gguf", "test", 0), chat, false, YouProfile(), original)
+            val first = runtime.parseAction(runtime.generateTurn(original) {}, original, emptyList(), tools)!!
+            val result = tools.execute(chat, first)
+            val next = runtime.parseAction(runtime.generateToolFollowUp(original, first.name, result) {}, original, listOf(result), tools)!!
+            assertEquals("web_read", next.name)
+            val guessed = """[tool]{"name":"web_read","arguments":{"url":"https://example.com/wrong-collection"}}[/tool]"""
+            assertTrue(runCatching { runtime.parseAction(guessed, original, listOf(result), tools) }.isFailure)
+            val fragment = next.copy(arguments = org.json.JSONObject(next.arguments.toString()).put("url", "https://example.com/collection#hours"))
+            assertEquals("Section links must not bypass repeated-read protection", tools.callKey(next), tools.callKey(fragment))
+            assertFalse(tools.needsConfirmation(next))
+            val page = tools.execute(chat, next)
+            val answer = runtime.generateToolFollowUp(original, next.name, page) {}
+            assertTrue(answer.contains("Tuesday"))
+            assertEquals(listOf("https://example.com/collection"), visited)
+            assertTrue(engine.prompts.any { it.contains("Search snippets or a link to a lookup portal may not contain the answer") })
+            assertTrue(engine.remaining.isEmpty())
+            store.setChatFlag(chat.id, "web", false)
+            assertTrue(runCatching { tools.execute(chat, next) }.isFailure)
+            assertEquals(1, visited.size)
+        } finally { runtime.release() }
+    }
+
     @Test fun collectionLookupChoosesAndExecutesSearchBeforeReturningAnAnswer() = fixture { context, store ->
         val original = "I'm trying to figure out the garbage schedule for my new house in Ottawa. I live at 100 Example Avenue."
         val call = """[tool]{"name":"web_search","arguments":{"query":"Ottawa garbage collection schedule 100 Example Avenue"}}[/tool]"""
-        val engine = ScriptedEngine(call, "The fixture city result says collection is Tuesday: https://example.com/collection")
+        val engine = ScriptedEngine(call, TurnDecision.REPLY_CALL, "The fixture city result says collection is Tuesday: https://example.com/collection")
         val queries = mutableListOf<String>()
         val tools = AssistantTools(context, store, webSearch = { queries.add(it); "Fixture city - https://example.com/collection - Collection is Tuesday." })
         val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
@@ -34,10 +69,11 @@ class ToolResponseRecoveryTest {
             val answer = runtime.generateToolFollowUp(original, request.name, result) {}
             assertEquals(listOf("Ottawa garbage collection schedule 100 Example Avenue"), queries)
             assertTrue(answer.contains("Tuesday"))
-            assertTrue(engine.prompts.last().contains(result))
+            assertTrue(engine.prompts.any { it.contains(result) })
+            assertFalse("Do not duplicate source text in the final answer prompt", engine.prompts.last().contains(result))
             assertEquals("Simple lookup completion must have no tool schema", "", engine.promptSchemas.last())
             assertTrue(engine.systemPrompt.contains("Use short answers."))
-            assertEquals(1, engine.forcedCalls)
+            assertEquals(2, engine.forcedCalls)
             assertTrue(engine.remaining.isEmpty())
             assertFalse(engine.forced)
             assertTrue("Reply decision must not become an executable capability", TurnDecision.REPLY !in schemaNames(engine))
@@ -82,7 +118,7 @@ class ToolResponseRecoveryTest {
     }
 
     @Test fun progressAfterSearchCannotFinishAsASuccessfulReply() = fixture { context, store ->
-        val engine = ScriptedEngine("Let me check the garbage schedule in Ottawa.")
+        val engine = ScriptedEngine(TurnDecision.REPLY_CALL, "Let me check the garbage schedule in Ottawa.")
         val tools = AssistantTools(context, store)
         val runtime = AssistantRuntime(context, store, engine) { web, request, recent, files -> tools.menu(web, request, recent, files) }
         try {
@@ -91,8 +127,8 @@ class ToolResponseRecoveryTest {
             assertTrue(runCatching {
                 runtime.generateToolFollowUp(original, "web_search", """{"status":"success","message":"Fixture city lookup: https://example.com/collection"}""") {}
             }.exceptionOrNull() is UnfinishedReplyException)
-            assertEquals(1, engine.prompts.size)
-            assertEquals(0, engine.forcedCalls)
+            assertEquals(2, engine.prompts.size)
+            assertEquals(1, engine.forcedCalls)
         } finally { runtime.release() }
     }
 
@@ -449,7 +485,7 @@ class ToolResponseRecoveryTest {
             definition.fields.forEach { field -> arguments.put(field.name, when (field.type) {
                 "integer" -> 7
                 "object" -> org.json.JSONObject("""{"nested":{"text":"a,b(c)","flags":[true,null,3]}}""")
-                else -> field.choices.firstOrNull() ?: "Example value"
+                else -> field.choices.firstOrNull() ?: if (field.name == "url") "https://example.com/source" else "Example value"
             }) }
             val envelope = org.json.JSONObject().put("name", definition.name).put("arguments", arguments)
             listOf("[tool]$envelope[/tool]", "${definition.name}($arguments)").forEach { text ->

@@ -32,7 +32,7 @@ internal object TurnDecision {
 
     fun prompt(request: String): String = """
         Choose the next step for this request. Output exactly one [tool] JSON block, with no commentary.
-        Use a listed tool when work is needed. For a web lookup or current external facts (such as a local collection schedule), call web_search before answering.
+        Use a listed tool when work is needed. For a web lookup or current external facts, call web_search if no search results are available yet. If results only point to a website without the requested facts, use web_read on a relevant returned URL or a different, more specific search. When verified results answer the question, choose $REPLY.
         A local lookup query MUST include the city AND the full street address when supplied. Keep the house number and street name verbatim; do not replace them with "new house" or "my address".
         If a required detail is missing, a tool is unavailable, no tool is needed, or the supplied results are sufficient, choose $REPLY with arguments {} to answer now.
         $REPLY does not start work. Never choose it just to announce that you will search, check, or do something later.

@@ -9,16 +9,12 @@ internal object WebLookupPolicy {
     private val collection = Regex("""\b(?:garbage|waste|trash|recycling|green bin)\b""", RegexOption.IGNORE_CASE)
     private val collectionTime = Regex("""\b(?:schedule|day|pick.?up|collect(?:ion|ed)?|when)\b""", RegexOption.IGNORE_CASE)
     private val street = Regex("""\b\d{1,6}\s+[\p{L}\p{N} .'-]+\s(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|way|court|ct|crescent|cres|place|pl|terrace|trail|rue|chemin)\b""", RegexOption.IGNORE_CASE)
-    private val followUp = Regex("""^\s*(?:are you (?:still )?(?:searching(?: for (?:it|that))?|checking)|did you find (?:it|anything)|any updates?)\s*[?.!]*\s*$""", RegexOption.IGNORE_CASE)
-    private val furtherAction = Regex("""\b(?:save|create|set|add|send|remind|remember|delete|update|reschedule|draft|share|schedule\s+(?:it|this|that|a|an|the|my))\b""", RegexOption.IGNORE_CASE)
-
-    fun lookupOnly(request: String, recent: String = ""): Boolean = requiresSearch(request, recent) &&
-        ResponsePolicy.resolve(ResponseMode.AUTO, request) == ResponseMode.QUICK &&
-        !furtherAction.containsMatchIn(if (followUp.matches(request)) recent else request)
+    private val followUp = Regex("""^\s*(?:are you (?:still )?(?:searching(?: for (?:it|that))?|checking)|did you find (?:it|anything)|any updates?|(?:(?:can you|could you|would you|please)\s+)*(?:check|look up|find|search for)\s+(?:it|that|this|the schedule|the answer|the dates?)(?:\s+for me)?)\s*[?.!]*\s*$""", RegexOption.IGNORE_CASE)
 
     fun requiresSearch(request: String, recent: String = ""): Boolean {
         if (TurnDecision.isWritingRequest(request) || directAction.containsMatchIn(request) || negative.containsMatchIn(request) || localSource.containsMatchIn(request)) return false
-        if (followUp.matches(request)) return recent.isNotBlank() && requiresSearch(recent)
+        if (followUp.matches(request)) return !negative.containsMatchIn(recent) &&
+            recent.lineSequence().filterNot { followUp.matches(it) }.any { requiresSearch(it) }
         explicit.find(request)?.let { command ->
             val subject = request.substring(command.range.last + 1).trim(' ', '.', '?', '!')
             if (subject.isNotBlank() && (subject.lowercase() !in setOf("it", "that", "this", "something") || recent.isNotBlank())) return true

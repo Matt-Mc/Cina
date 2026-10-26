@@ -24,6 +24,9 @@ class AssistantRuntime internal constructor(context: Context, private val store:
     private var recoveries = 0
     private var actionRepairs = 0
     private var actionSchema = ""
+    private val webSources = WebSources()
+    private fun toolSchema(scheduled: Boolean = loadedChat == 0L): String =
+        webSources.constrain(ToolCatalog.schema(scheduled = scheduled, onlyNames = selectedToolNames))
     private var selectedToolNames = emptySet<String>()
     private var availableToolNames = emptySet<String>()
     private var discoveryQuery: String? = null
@@ -84,6 +87,8 @@ class AssistantRuntime internal constructor(context: Context, private val store:
         val time = java.time.ZonedDateTime.now().toString()
         val recentRequests = previousMessages.filter { it.role == "user" }.takeLast(2).joinToString("\n") { it.body.take(500) }
         recentUserRequests = recentRequests
+        webSources.clear()
+        webSources.remember(latest + "\n" + recentRequests)
         loadedHasFiles = store.attachments(chat.id).isNotEmpty()
         val menu = toolsSelection(chat.web, latest, recentRequests, loadedHasFiles)
         selectedToolNames = menu.names
@@ -111,7 +116,7 @@ class AssistantRuntime internal constructor(context: Context, private val store:
         require(conversationTokens + engine.countTokens(latest) + 128 < actualCapacity) { "This request and context are too large for the selected model. Shorten the request or disable unused skills." }
         engine.resetSystemPrompt(finalPrompt)
         assistantSystemPrompt = finalPrompt
-        actionSchema = ToolCatalog.schema(scheduled = chat.id == 0L, onlyNames = selectedToolNames)
+        actionSchema = toolSchema(scheduled = chat.id == 0L)
         engine.setToolSchema(actionSchema)
         performance.value("prompt_tokens", engine.countTokens(basePrompt + history + latest))
         performance.mark("context_ready_ms")
@@ -123,6 +128,7 @@ class AssistantRuntime internal constructor(context: Context, private val store:
         for ((request, result) in checkpoints) {
             val outcome = org.json.JSONObject(result)
             if (outcome.optString("status") != "success") continue
+            if (request.name in setOf("web_search", "web_read")) webSources.remember(outcome.optString("message"))
             if (request.name == "local_find") {
                 val query = request.arguments.getString("query")
                 val menu = toolsSelection(loadedWeb == true, query, "", loadedHasFiles)
@@ -136,13 +142,19 @@ class AssistantRuntime internal constructor(context: Context, private val store:
         if (ResponsePolicy.workFocused(original)) selectedToolNames = selectedToolNames.intersect(ResponsePolicy.workTools(original))
         if (continuingPlanId != null) selectedToolNames = selectedToolNames - "draft_work_step"
         discoveryQuery = checkpoints.lastOrNull()?.request?.takeIf { it.name == "local_find" }?.arguments?.getString("query")
-        actionSchema = ToolCatalog.schema(scheduled = loadedChat == 0L, onlyNames = selectedToolNames)
+        actionSchema = toolSchema()
         engine.setToolSchema(actionSchema)
     }
 
     internal suspend fun generateToolFollowUp(original: String,toolName: String,result: String,onText: (String)->Unit): String {
-        if (toolName == "web_search" && WebLookupPolicy.lookupOnly(original, recentUserRequests) && org.json.JSONObject(result).optString("status") == "success") {
-            return composeTextAnswer(original, listOf(result), recovery = false, onText = onText)
+        if (toolName in setOf("web_search", "web_read")) {
+            val outcome = org.json.JSONObject(result)
+            if (outcome.optString("status") == "success") webSources.remember(outcome.optString("message"))
+            actionSchema = toolSchema()
+            engine.setToolSchema(actionSchema)
+            // Finding a page is not the same as finding the answer. Keep research tools available.
+            return generateTurn(AssistantPrompt.toolFollowUp(original, toolName, result), original,
+                requireInitialSearch = false, onText = onText)
         }
         var instruction=""
         if (toolName == "local_find") {
@@ -155,7 +167,7 @@ class AssistantRuntime internal constructor(context: Context, private val store:
                 selectedToolNames = (selectedToolNames + discovered).intersect(availableToolNames)
                 if (ResponsePolicy.workFocused(original)) selectedToolNames = selectedToolNames.intersect(ResponsePolicy.workTools(original))
                 if (continuingPlanId != null) selectedToolNames = selectedToolNames - "draft_work_step"
-                actionSchema = ToolCatalog.schema(scheduled = loadedChat == 0L, onlyNames = selectedToolNames)
+                actionSchema = toolSchema()
                 engine.setToolSchema(actionSchema)
             }
         }
@@ -165,7 +177,7 @@ class AssistantRuntime internal constructor(context: Context, private val store:
                 val data=outcome.getJSONObject("data")
                 continuingPlanId=data.getString("work_id")
                 selectedToolNames = (selectedToolNames - "draft_work_step" + "append_work_step").intersect(availableToolNames)
-                actionSchema=ToolCatalog.schema(scheduled = loadedChat == 0L, onlyNames=selectedToolNames)
+                actionSchema = toolSchema()
                 engine.setToolSchema(actionSchema)
                 instruction="\nThis request already has one plan: $continuingPlanId, revision ${data.getInt("revision")}. Use append_work_step for any remaining requested steps in that same plan. Do not start another plan. If all requested steps are drafted, stop and explain that the user must review them in Actions."
             }
@@ -176,8 +188,9 @@ class AssistantRuntime internal constructor(context: Context, private val store:
     }
 
     /** Choose an executable action before generating prose. Lazy tool grammar alone permits no-op promises. */
-    internal suspend fun generateTurn(prompt: String, original: String = prompt, onText: (String) -> Unit): String {
-        val requiredSearch = "web_search" in selectedToolNames && WebLookupPolicy.requiresSearch(original, recentUserRequests)
+    internal suspend fun generateTurn(prompt: String, original: String = prompt,
+        requireInitialSearch: Boolean = true, onText: (String) -> Unit): String {
+        val requiredSearch = requireInitialSearch && "web_search" in selectedToolNames && WebLookupPolicy.requiresSearch(original, recentUserRequests)
         val decision = try {
             engine.setThinking(false)
             engine.setToolSchema(if (requiredSearch) ToolCatalog.schema(onlyName = "web_search") else TurnDecision.schema(actionSchema), force = true)
@@ -195,7 +208,8 @@ class AssistantRuntime internal constructor(context: Context, private val store:
         // This branch is text only. A claimed action cannot reach the dispatcher from here.
         val answer = try {
             engine.setToolSchema("")
-            generate(TurnDecision.replyPrompt(prompt), onText)
+            // The decision turn already ingested the page/results. Repeating them can fill a small context.
+            generate(TurnDecision.replyPrompt(original), onText)
         } finally { engine.setToolSchema(actionSchema) }
         if (TurnDecision.promisesWork(answer, original)) throw UnfinishedReplyException()
         require(!ToolResponseProtocol.isAttempt(splitModelResponse(answer).answer)) {
@@ -244,6 +258,9 @@ class AssistantRuntime internal constructor(context: Context, private val store:
                 ?: error("Action repair did not produce an action.")
             require(request.name == error.toolName) { "Action repair changed the requested tool." }
             request
+        }
+        if (request?.name == "web_read") require(webSources.contains(request.arguments.getString("url"))) {
+            "Choose an exact URL supplied by the user or returned by a web tool. No page was opened."
         }
         if (request != null && ResponsePolicy.workFocused(original)) require(ToolCatalog.get(request.name)?.group in setOf("work","discovery")) {
             "Use the plan controls for this request. No direct action was taken."

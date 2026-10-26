@@ -1,5 +1,7 @@
 # Tool routing and unfinished replies
 
+Update: [web lookup completion](web-answer-completion-2026-10-25.md) supersedes the simple-search text-only shortcut described below. Web results now retain the ability to read sources and continue research.
+
 ## Failure
 
 Phone chat previously used a lazy tool grammar: it constrained a tool call only after the model emitted `[tool]`. The model could instead finish with ordinary prose such as “Let me check the collection schedule.” That text satisfied the final-answer check, so the saved turn completed without executing a search. There was no background job to deliver another message.

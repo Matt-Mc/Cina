@@ -8,7 +8,8 @@ android {
     if (!providers.gradleProperty("skipNative").isPresent) ndkVersion = "29.0.13113456"
     defaultConfig {
         minSdk = 29
-        ndk { abiFilters += if (providers.gradleProperty("emulator").isPresent) listOf("arm64-v8a", "x86_64") else listOf("arm64-v8a") }
+        // Emulator regression APKs only need x86_64; ordinary phone/release builds remain arm64.
+        ndk { abiFilters += if (providers.gradleProperty("emulator").isPresent) listOf("x86_64") else listOf("arm64-v8a") }
         if (!providers.gradleProperty("skipNative").isPresent) externalNativeBuild { cmake {
             arguments += listOf("-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=ON", "-DLLAMA_BUILD_APP=OFF", "-DLLAMA_BUILD_COMMON=ON", "-DLLAMA_OPENSSL=OFF", "-DGGML_NATIVE=OFF", "-DGGML_BACKEND_DL=ON", "-DGGML_CPU_ALL_VARIANTS=ON", "-DGGML_LLAMAFILE=OFF")
         } }

@@ -29,7 +29,10 @@ class WorkOverviewTest {
             val manager=base.getSystemService(android.app.NotificationManager::class.java)
             val notification=manager.activeNotifications.single { it.tag=="work:$id" }.notification
             notification.contentIntent.send()
-            compose.waitUntil(10000) { compose.onAllNodesWithText("New local task").fetchSemanticsNodes().isNotEmpty() }
+            // Notification navigation may briefly detach the Compose root during the activity transition.
+            compose.waitUntil(10000) {
+                compose.onAllNodesWithText("New local task").fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+            }
             compose.onNodeWithText("Actions").assertIsSelected()
             LocalStore(base).use { assertEquals("waiting_for_approval",WorkCoordinator(it).task(id)!!.state);assertTrue(it.notes().none { n -> n.title=="Overview fixture" }) }
         } finally {

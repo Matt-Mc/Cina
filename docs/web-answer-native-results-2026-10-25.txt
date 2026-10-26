@@ -1,0 +1,20 @@
+Real local inference; web responses are test fixtures. Addresses and pickup days below are fictional.
+
+Model: Qwen3-0.6B-Q8_0.gguf
+First decision: [tool]{"name":"web_search","arguments":{"query":"garbage schedule for new house in Ottawa 100 Example Avenue"}}[/tool]
+Executed: web_search
+Continuation: [tool]{"name":"web_read","arguments":{"url":"https://example.com/collection"}}[/tool]
+Executed: web_read
+Continuation: The garbage schedule for 100 Example Avenue, Ottawa is collected every Tuesday.
+PASS: search and source read executed, then concrete final answer returned
+Real local inference; web responses are test fixtures. Addresses and pickup days below are fictional.
+
+Model: Qwen3-1.7B-Q8_0.gguf
+First decision: [tool]{"name":"web_search","arguments":{"query":"garbage schedule Ottawa 100 Example Avenue"}}[/tool]
+Executed: web_search
+Continuation: [tool]{"name":"web_read","arguments":{"url":"https://example.com/collection"}}[/tool]
+Executed: web_read
+Continuation: The garbage is collected every Tuesday at 100 Example Avenue, Ottawa.
+
+Source: https://example.com/collection
+PASS: search and source read executed, then concrete final answer returned

@@ -15,7 +15,8 @@ import java.time.Instant
 
 class AssistantTools(private val context: Context, private val store: LocalStore, private val secrets: SecretStore? = null,
                      private val mcp: McpConnections? = null, private val scheduledModelPath: String? = null,
-                     private val webSearch: (String) -> String = DuckDuckGoSearch::search) {
+                     private val webSearch: (String) -> String = DuckDuckGoSearch::search,
+                     private val webRead: (String) -> String = WebPageReader::read) {
     internal fun menu(webEnabled: Boolean, request: String, recent: String, hasFiles: Boolean): ToolMenu {
         val memory = context.getSharedPreferences("settings", 0).getBoolean("memory", true)
         val connected = mcp?.snapshot()?.any { it.connected } == true
@@ -58,6 +59,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
         return ToolRequest(call.name, arguments)
     }
     fun callKey(request: ToolRequest): String {
+        if (request.name == "web_read") return "web_read:" + JSONObject.quote(WebSources.canonical(request.arguments.getString("url")))
         fun canonical(value: Any?): String = when (value) {
             is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") {
                 val field = value.get(it)
@@ -240,6 +242,10 @@ class AssistantTools(private val context: Context, private val store: LocalStore
                 val text = required("text")
                 withContext(Dispatchers.Main) { (context as Activity).startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Share with")) }
                 "Opened Android's share sheet. The user chooses where to send it."
+            }
+            "web_read" -> {
+                require((store.chat(chat.id) ?: chat).web) { "Web access is off for this chat." }
+                webRead(required("url"))
             }
             "web_search" -> {
                 require((store.chat(chat.id) ?: chat).web) { "Web access is off for this chat." }
