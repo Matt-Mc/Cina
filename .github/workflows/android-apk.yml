@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      # SDK installation timestamps vary between runners; key the actual compiler instead.
+      CCACHE_COMPILERCHECK: content
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
