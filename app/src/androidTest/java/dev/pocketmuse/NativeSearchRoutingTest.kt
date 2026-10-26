@@ -17,7 +17,8 @@ class NativeSearchRoutingTest {
         val models = listOf("Qwen3-0.6B-Q8_0.gguf", "Qwen3-1.7B-Q8_0.gguf")
             .map { File(base.getExternalFilesDir(null), it) }.filter { it.exists() }
         assumeTrue("Supply a Qwen3 GGUF for the native routing test", models.isNotEmpty())
-        val db = File(base.cacheDir, "native-search-routing-${System.nanoTime()}.db")
+        // Android may evict cache files under storage pressure while a large GGUF is loaded.
+        val db = File(base.noBackupFilesDir, "native-search-routing-${System.nanoTime()}.db")
         val context = object : ContextWrapper(base) { override fun getDatabasePath(name: String) = db }
         val evidence = File(base.getExternalFilesDir(null), "native-search-routing-results.txt")
         evidence.writeText("Real local inference; web responses are test fixtures. Addresses and pickup days below are fictional.\n")
@@ -25,9 +26,13 @@ class NativeSearchRoutingTest {
             try { LocalStore(context).use { store ->
                 for (file in models) withTimeout(360_000) {
                     val queries = mutableListOf<String>()
+                    val pages = mutableListOf<String>()
                     val tools = AssistantTools(context, store, webSearch = { query ->
                         queries.add(query)
-                        "Example City collection lookup - https://example.com/collection - 100 Example Avenue, Ottawa: garbage is collected every Tuesday."
+                        "Example City collection lookup - https://example.com/collection - Open this page for the collection schedule for 100 Example Avenue, Ottawa. The search snippet does not contain the day."
+                    }, webRead = { url ->
+                        pages.add(url)
+                        "Source: https://example.com/collection - 100 Example Avenue, Ottawa: garbage is collected every Tuesday."
                     })
                     val runtime = AssistantRuntime(context, store) { web, request, recent, files -> tools.menu(web, request, recent, files) }
                     val model = LocalModel(0, file.name, file.absolutePath, "test", file.length())
@@ -62,13 +67,14 @@ class NativeSearchRoutingTest {
                             evidence.appendText("Executed: ${request.name}\nContinuation: $raw\n")
                         }
                         assertTrue("No actual search: $raw", queries.isNotEmpty())
+                        assertEquals("The search snippet has no answer; the source must be read", listOf("https://example.com/collection"), pages)
                         assertTrue(queries.toString(), queries.any { it.contains("Ottawa", true) && it.contains("Example", true) })
                         assertTrue("Turn never finished: $raw", finished && hasFinalAnswer(raw))
                         assertFalse(TurnDecision.promisesWork(raw, original))
                         assertTrue("Final answer ignored the search result: $raw", raw.contains("Tuesday", true))
                         val citedUrls = Regex("https?://[^\\s)]+" ).findAll(raw).map { it.value.trimEnd('.', ',') }.toList()
                         assertTrue("Invented source: $raw", citedUrls.all { it == "https://example.com/collection" })
-                        evidence.appendText("PASS: search executed and final answer returned\n")
+                        evidence.appendText("PASS: search and source read executed, then concrete final answer returned\n")
                     } finally { runtime.release() }
                 }
             } } finally { android.database.sqlite.SQLiteDatabase.deleteDatabase(db) }

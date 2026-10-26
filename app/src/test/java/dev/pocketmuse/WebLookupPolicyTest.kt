@@ -4,14 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WebLookupPolicyTest {
-    @Test fun simpleLookupsFinishWithTextWhileResearchAndRemainingActionsKeepTools() {
-        assertTrue(WebLookupPolicy.lookupOnly("Search the web for Ottawa collection dates"))
-        assertTrue(WebLookupPolicy.lookupOnly("I'm trying to figure out the garbage schedule at 100 Example Avenue in Ottawa"))
-        assertFalse(WebLookupPolicy.lookupOnly("Search the web for Ottawa collection dates and save a note"))
-        assertFalse(WebLookupPolicy.lookupOnly("Search the web and compare these collection policies in detail"))
-        assertFalse(WebLookupPolicy.lookupOnly("Look up Ottawa collection dates; remind me tomorrow at 9 AM"))
-        assertTrue(WebLookupPolicy.lookupOnly("are you checking?", "What is the garbage schedule at 100 Example Avenue in Ottawa?"))
-        assertFalse(WebLookupPolicy.lookupOnly("Search the web for Ottawa collection dates; schedule it for tomorrow"))
+    @Test fun delegatedFollowUpsKeepLookupIntentWithoutInventingASubject() {
+        val earlier = "What is the garbage schedule at 100 Example Avenue in Ottawa?"
+        listOf("can you please check the schedule for me?", "Please look up the answer", "could you check it for me?", "please find the dates").forEach {
+            assertTrue(it, WebLookupPolicy.requiresSearch(it, earlier))
+            assertTrue(it, WebLookupPolicy.requiresSearch(it, "$earlier\nare you checking?"))
+            assertFalse(it, WebLookupPolicy.requiresSearch(it))
+            assertFalse(it, WebLookupPolicy.requiresSearch(it, "Search my notes for collection dates"))
+            assertFalse(it, WebLookupPolicy.requiresSearch(it, "Don't search the web for collection dates"))
+            assertFalse(it, WebLookupPolicy.requiresSearch(it, "$earlier\nDon't search the web"))
+        }
     }
     @Test fun explicitLookupRequestsRequireASearch() {
         listOf("Search the web for Ottawa collection dates", "Can you please look up Ottawa collection dates?",

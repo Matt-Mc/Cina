@@ -1,0 +1,644 @@
+{
+  "description": "Live Android inference and real network tools. These are observed model outputs, including incorrect answers; see the accompanying human-reviewed report. Tool payload hashes refer to raw local evidence, which is not reproduced here.",
+  "mode": "QUICK",
+  "thinking": false,
+  "inference": "local GGUF",
+  "completed_cases": {
+    "0.6B_Q4_K_M": 8,
+    "1.7B_Q8_0": 4,
+    "0.6B_Q8_0": 8
+  },
+  "stopping_rule": "The 1.7B run was stopped after one complete four-scenario pass because critical factual errors and hand-off behavior already failed the acceptance criteria. No second-pass result is scored.",
+  "results": [
+    {
+      "model": "Qwen3-0.6B-Q4_K_M.gguf",
+      "case": "museum_search",
+      "repetition": 1,
+      "request": "Search the web for the Canadian Museum of History's free admission day and hours. Give me the day and times with a source.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Canadian Museum of History's free admission day and hours"
+          },
+          "status": "success",
+          "result_characters": 1532,
+          "result_sha256": "f166f36c0855389437ea3c3d93c3fdf3e42ca59ec6a75559330f63e7965885dd",
+          "elapsed_ms": 1757
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 7312,
+          "result_sha256": "3fba574c8090306367622e2729480d9aa270490f8638b217d9874ea758e4dabe",
+          "elapsed_ms": 1649
+        },
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Canadian Museum of History's free admission day and hours"
+          },
+          "status": "success",
+          "result_characters": 1532,
+          "result_sha256": "a121297c14b949ddae4f8a3e5816b2e6cf84d70f24c5feb0e10689d4d0fb39ea",
+          "elapsed_ms": 609
+        }
+      ],
+      "answer": "The Canadian Museum of History offers free admission on Thursdays from 17:00-19:00, with no charge for all visitors regardless of age or residency. The museum is located in Ottawa-Gatineau, Canada, and operates from Monday to Sunday at the following hours: 9 am to 5 pm. For more details, visit the Canadian Museum of History's official website.",
+      "error": null,
+      "elapsed_ms": 75692
+    },
+    {
+      "model": "Qwen3-0.6B-Q4_K_M.gguf",
+      "case": "museum_page",
+      "repetition": 1,
+      "request": "Read https://www.historymuseum.ca/plan-your-visit and tell me when admission is free. Give me the actual day and hours.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 1367,
+          "result_sha256": "d68a675d768666d766189911ee29f28f8db435f33c133363e60db205f109f3b3",
+          "elapsed_ms": 1997
+        }
+      ],
+      "answer": "The Canadian Museum of History is located in Ottawa, Canada, and admission is free on weekdays from 10 a.m. to 5 p.m. Admission is free on Remembrance Day, November 11, from 10 a.m. to 5 p.m.",
+      "error": null,
+      "elapsed_ms": 17280
+    },
+    {
+      "model": "Qwen3-0.6B-Q4_K_M.gguf",
+      "case": "schedule_followup",
+      "repetition": 1,
+      "request": "can you please check the schedule for me?",
+      "prior_request": "I need the garbage schedule for 100 Example Avenue in Ottawa.",
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "garbage schedule for 100 Example Avenue, Ottawa"
+          },
+          "status": "success",
+          "result_characters": 1963,
+          "result_sha256": "f060d86b72d69c6ad0daa7f17b152f0656ae6acfd1f21408b8766ee501b52207",
+          "elapsed_ms": 1899
+        }
+      ],
+      "answer": "The schedule for 100 Example Avenue in Ottawa is available through the City of Ottawa website. Please check there.",
+      "error": null,
+      "elapsed_ms": 21850
+    },
+    {
+      "model": "Qwen3-0.6B-Q4_K_M.gguf",
+      "case": "missing_address",
+      "repetition": 1,
+      "request": "What is my garbage collection day?",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "local_find",
+          "arguments": {
+            "query": "my garbage collection day"
+          },
+          "status": "success",
+          "result_characters": 997,
+          "result_sha256": "25d2e98cd98024f49b5f38b076857cf398f44e942df160af6456779b0096269a",
+          "elapsed_ms": 9
+        },
+        {
+          "name": "local_find",
+          "arguments": {
+            "query": "my address"
+          },
+          "status": "success",
+          "result_characters": 997,
+          "result_sha256": "25d2e98cd98024f49b5f38b076857cf398f44e942df160af6456779b0096269a",
+          "elapsed_ms": 16
+        }
+      ],
+      "answer": "Your garbage collection day is not specified in the provided information. Could you please provide more details or clarify the context?",
+      "error": null,
+      "elapsed_ms": 15337
+    },
+    {
+      "model": "Qwen3-0.6B-Q4_K_M.gguf",
+      "case": "museum_search",
+      "repetition": 2,
+      "request": "Search the web for the Canadian Museum of History's free admission day and hours. Give me the day and times with a source.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Canadian Museum of History's free admission day and hours"
+          },
+          "status": "success",
+          "result_characters": 1532,
+          "result_sha256": "f166f36c0855389437ea3c3d93c3fdf3e42ca59ec6a75559330f63e7965885dd",
+          "elapsed_ms": 1437
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 7312,
+          "result_sha256": "3fba574c8090306367622e2729480d9aa270490f8638b217d9874ea758e4dabe",
+          "elapsed_ms": 535
+        },
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Canadian Museum of History's free admission days and hours"
+          },
+          "status": "success",
+          "result_characters": 1762,
+          "result_sha256": "1eb46974877d7cb7561bdf263bd1d189981e3164f5d758736beaf19946e13696",
+          "elapsed_ms": 1259
+        }
+      ],
+      "answer": "The Canadian Museum of History offers free admission every Thursday from 17:00-19:00, and the general admission is around $25 CAD. The museum is located in Ottawa-Gatineau, Canada, on the Gatineau waterfront.",
+      "error": null,
+      "elapsed_ms": 69685
+    },
+    {
+      "model": "Qwen3-0.6B-Q4_K_M.gguf",
+      "case": "museum_page",
+      "repetition": 2,
+      "request": "Read https://www.historymuseum.ca/plan-your-visit and tell me when admission is free. Give me the actual day and hours.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 1612,
+          "result_sha256": "1cd8a2548cc45593361d098598a1f87bcca2bbfdf3fb59018ecdaa4b536711dd",
+          "elapsed_ms": 786
+        }
+      ],
+      "answer": "Admission at the Canadian Museum of History is free on Wed to Sun from 10 A.M. to 5 P.M.",
+      "error": null,
+      "elapsed_ms": 21550
+    },
+    {
+      "model": "Qwen3-0.6B-Q4_K_M.gguf",
+      "case": "schedule_followup",
+      "repetition": 2,
+      "request": "can you please check the schedule for me?",
+      "prior_request": "I need the garbage schedule for 100 Example Avenue in Ottawa.",
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "garbage schedule for 100 Example Avenue in Ottawa"
+          },
+          "status": "success",
+          "result_characters": 1821,
+          "result_sha256": "d0c0195b2765c6acec2672d2845660b664fe86c97da57c30982e3fdbcb814c3d",
+          "elapsed_ms": 883
+        }
+      ],
+      "answer": "The schedule for 100 Example Avenue in Ottawa is available through the City of Ottawa website. Please check there for specific details.",
+      "error": null,
+      "elapsed_ms": 21268
+    },
+    {
+      "model": "Qwen3-0.6B-Q4_K_M.gguf",
+      "case": "missing_address",
+      "repetition": 2,
+      "request": "What is my garbage collection day?",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "local_find",
+          "arguments": {
+            "query": "my garbage collection day"
+          },
+          "status": "success",
+          "result_characters": 997,
+          "result_sha256": "25d2e98cd98024f49b5f38b076857cf398f44e942df160af6456779b0096269a",
+          "elapsed_ms": 11
+        },
+        {
+          "name": "local_find",
+          "arguments": {
+            "query": "my address"
+          },
+          "status": "success",
+          "result_characters": 997,
+          "result_sha256": "25d2e98cd98024f49b5f38b076857cf398f44e942df160af6456779b0096269a",
+          "elapsed_ms": 11
+        }
+      ],
+      "answer": "Your garbage collection day is not specified in the provided information. Please provide more details or check if there's a specific date or schedule you're referring to.",
+      "error": null,
+      "elapsed_ms": 16236
+    },
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "case": "museum_search",
+      "repetition": 1,
+      "request": "Search the web for the Canadian Museum of History's free admission day and hours. Give me the day and times with a source.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Canadian Museum of History's free admission day and hours"
+          },
+          "status": "success",
+          "result_characters": 1532,
+          "result_sha256": "f166f36c0855389437ea3c3d93c3fdf3e42ca59ec6a75559330f63e7965885dd",
+          "elapsed_ms": 1829
+        }
+      ],
+      "answer": "- **Free Admission Day**: Thursdays  \n- **Hours**: 17:00–19:00  \n- **Source**: [Canadian Museum of History](https://www.historymuseum.ca)",
+      "error": null,
+      "elapsed_ms": 33687
+    },
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "case": "museum_page",
+      "repetition": 1,
+      "request": "Read https://www.historymuseum.ca/plan-your-visit and tell me when admission is free. Give me the actual day and hours.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "https://www.historymuseum.ca/plan-your-visit admission free day and hours"
+          },
+          "status": "success",
+          "result_characters": 1619,
+          "result_sha256": "b3ba32fa9966244379156990574d864c6c8806a2d7c81fcf40151737d95375e5",
+          "elapsed_ms": 1477
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 7312,
+          "result_sha256": "3fba574c8090306367622e2729480d9aa270490f8638b217d9874ea758e4dabe",
+          "elapsed_ms": 1313
+        }
+      ],
+      "answer": "Canada Strong Pass offers free and reduced admission at all times at the Canadian Museum of History. The museum is located at 100 Laurier Street, Gatineau, Quebec, K1A 0M8. Admission fees are $25 for adults, $20 for students, $18 for children, and $68 for families. Free admission is available for members and volunteers, Indigenous Peoples, Canoo members, and single attendants with disabilities. The museum is open from September 8 to December 9, 2026, from 9 am to 7 pm on weekdays and 9 am to 5 pm on weekends.",
+      "error": null,
+      "elapsed_ms": 95248
+    },
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "case": "schedule_followup",
+      "repetition": 1,
+      "request": "can you please check the schedule for me?",
+      "prior_request": "I need the garbage schedule for 100 Example Avenue in Ottawa.",
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "garbage schedule 100 Example Avenue Ottawa"
+          },
+          "status": "success",
+          "result_characters": 1963,
+          "result_sha256": "f060d86b72d69c6ad0daa7f17b152f0656ae6acfd1f21408b8766ee501b52207",
+          "elapsed_ms": 752
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://ottawa.ca/en/3-1-1/report-or-request/garbage-recycling-and-organic-waste/garbage-and-recycling-collection-calendar"
+          },
+          "status": "success",
+          "result_characters": 5385,
+          "result_sha256": "ad6a5f979b91404a7951bab1cb638d349f0f359aee7838c4188967de23b189aa",
+          "elapsed_ms": 1675
+        },
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "garbage schedule 100 Example Avenue Ottawa"
+          },
+          "status": "success",
+          "result_characters": 1795,
+          "result_sha256": "0ace0915ec8951c19b8577d033a51ea01d1dbc7d1d81fb03c5794e504799cf39",
+          "elapsed_ms": 1982
+        }
+      ],
+      "answer": "The garbage schedule for 100 Example Avenue in Ottawa is available on the City of Ottawa's website. Please check the provided links: [City of Ottawa Garbage and Recycling Collection Calendar](https://ottawa.ca/en/garbage-and-recycling/garbage-and-provincial-recycling-program/your-garbage-and-recycling-collection-calendar) or [Garbage and Recycling Schedule](https://ottawa.ca/en/garbage-and-recycling).",
+      "error": null,
+      "elapsed_ms": 116568
+    },
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "case": "missing_address",
+      "repetition": 1,
+      "request": "What is my garbage collection day?",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "local_find",
+          "arguments": {
+            "query": "my garbage collection day"
+          },
+          "status": "success",
+          "result_characters": 997,
+          "result_sha256": "25d2e98cd98024f49b5f38b076857cf398f44e942df160af6456779b0096269a",
+          "elapsed_ms": 11
+        }
+      ],
+      "answer": "Your garbage collection day is typically the day you dispose of your household waste.",
+      "error": null,
+      "elapsed_ms": 20223
+    },
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "case": "museum_search",
+      "repetition": 2,
+      "request": "Search the web for the Canadian Museum of History's free admission day and hours. Give me the day and times with a source.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Canadian Museum of History's free admission day and hours"
+          },
+          "status": "success",
+          "result_characters": 1532,
+          "result_sha256": "f166f36c0855389437ea3c3d93c3fdf3e42ca59ec6a75559330f63e7965885dd",
+          "elapsed_ms": 1366
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 7312,
+          "result_sha256": "3fba574c8090306367622e2729480d9aa270490f8638b217d9874ea758e4dabe",
+          "elapsed_ms": 497
+        }
+      ],
+      "answer": "Canadian Museum of History's free admission day is every Thursday from 5:00 PM to 7:00 PM. The hours are available at the Canadian Museum of History in Gatineau, Quebec.",
+      "error": null,
+      "elapsed_ms": 76007
+    },
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "case": "museum_page",
+      "repetition": 2,
+      "request": "Read https://www.historymuseum.ca/plan-your-visit and tell me when admission is free. Give me the actual day and hours.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "https://www.historymuseum.ca/plan-your-visit admission free days and hours"
+          },
+          "status": "success",
+          "result_characters": 1676,
+          "result_sha256": "12749dfa7787af8514a6817cf594ead705bdc63161baf7961ba44237b5be36b7",
+          "elapsed_ms": 1882
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 7312,
+          "result_sha256": "3fba574c8090306367622e2729480d9aa270490f8638b217d9874ea758e4dabe",
+          "elapsed_ms": 2244
+        }
+      ],
+      "answer": "Canadian Museum of History admission is free at all times. The museum is located at 100 Laurier Street, Gatineau, Quebec K1A 0M8.",
+      "error": null,
+      "elapsed_ms": 91964
+    },
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "case": "schedule_followup",
+      "repetition": 2,
+      "request": "can you please check the schedule for me?",
+      "prior_request": "I need the garbage schedule for 100 Example Avenue in Ottawa.",
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "garbage schedule 100 Example Avenue Ottawa"
+          },
+          "status": "success",
+          "result_characters": 1795,
+          "result_sha256": "0ace0915ec8951c19b8577d033a51ea01d1dbc7d1d81fb03c5794e504799cf39",
+          "elapsed_ms": 1592
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://ottawa.ca/en/garbage-and-recycling/garbage-and-provincial-recycling-program/your-garbage-and-recycling-collection-calendar"
+          },
+          "status": "success",
+          "result_characters": 7681,
+          "result_sha256": "2eb56c732e7457d83716e6200856d08cabe74193fe797574e39abedb4f411872",
+          "elapsed_ms": 1498
+        }
+      ],
+      "answer": "The garbage schedule for 100 Example Avenue in Ottawa is available through the City of Ottawa's website. You can check it there.",
+      "error": null,
+      "elapsed_ms": 87875
+    },
+    {
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "case": "missing_address",
+      "repetition": 2,
+      "request": "What is my garbage collection day?",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "local_find",
+          "arguments": {
+            "query": "my garbage collection day"
+          },
+          "status": "success",
+          "result_characters": 997,
+          "result_sha256": "25d2e98cd98024f49b5f38b076857cf398f44e942df160af6456779b0096269a",
+          "elapsed_ms": 11
+        }
+      ],
+      "answer": "Your garbage collection day is typically the first day of the month.",
+      "error": null,
+      "elapsed_ms": 21745
+    },
+    {
+      "model": "Qwen3-1.7B-Q8_0.gguf",
+      "case": "museum_search",
+      "repetition": 1,
+      "request": "Search the web for the Canadian Museum of History's free admission day and hours. Give me the day and times with a source.",
+      "prior_request": null,
+      "status": "recovered_answer",
+      "guard": "Repeated tool call stopped.",
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Canadian Museum of History free admission day and hours"
+          },
+          "status": "success",
+          "result_characters": 1532,
+          "result_sha256": "45b31309d7461a9c48c31e0b22b58b80ad001383a4e0ded359432c99b5636ca4",
+          "elapsed_ms": 2227
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 7312,
+          "result_sha256": "3fba574c8090306367622e2729480d9aa270490f8638b217d9874ea758e4dabe",
+          "elapsed_ms": 1731
+        }
+      ],
+      "answer": "The Canadian Museum of History offers free admission every Thursday from 5:00 PM to 7:00 PM. This information is sourced from the official website of the museum.",
+      "error": null,
+      "elapsed_ms": 212586
+    },
+    {
+      "model": "Qwen3-1.7B-Q8_0.gguf",
+      "case": "museum_page",
+      "repetition": 1,
+      "request": "Read https://www.historymuseum.ca/plan-your-visit and tell me when admission is free. Give me the actual day and hours.",
+      "prior_request": null,
+      "status": "answered",
+      "guard": null,
+      "steps": [
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://www.historymuseum.ca/plan-your-visit"
+          },
+          "status": "success",
+          "result_characters": 7312,
+          "result_sha256": "3fba574c8090306367622e2729480d9aa270490f8638b217d9874ea758e4dabe",
+          "elapsed_ms": 593
+        }
+      ],
+      "answer": "The Canadian Museum of History offers free admission on specific days and times as follows:\n\n- **Free Admission**: Every Thursday from 9 am to 7 pm.\n- **Free Admission for Certain Groups**: Members, Indigenous Peoples, Canoo members, and individuals with a single attendant accompanying a person with a disability.\n\nSource: [Canadian Museum of History](https://www.historymuseum.ca/plan-your-visit)",
+      "error": null,
+      "elapsed_ms": 187156
+    },
+    {
+      "model": "Qwen3-1.7B-Q8_0.gguf",
+      "case": "schedule_followup",
+      "repetition": 1,
+      "request": "can you please check the schedule for me?",
+      "prior_request": "I need the garbage schedule for 100 Example Avenue in Ottawa.",
+      "status": "answered",
+      "guard": null,
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "garbage schedule for 100 Example Avenue in Ottawa"
+          },
+          "status": "success",
+          "result_characters": 1821,
+          "result_sha256": "d0c0195b2765c6acec2672d2845660b664fe86c97da57c30982e3fdbcb814c3d",
+          "elapsed_ms": 1971
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://ottawa.ca/en/garbage-and-recycling/garbage-and-provincial-recycling-program/your-garbage-and-recycling-collection-calendar"
+          },
+          "status": "success",
+          "result_characters": 7681,
+          "result_sha256": "2eb56c732e7457d83716e6200856d08cabe74193fe797574e39abedb4f411872",
+          "elapsed_ms": 1340
+        }
+      ],
+      "answer": "The garbage and recycling collection calendar for 100 Example Avenue in Ottawa is available on the City of Ottawa's website. You can view it [here](https://ottawa.ca/en/garbage-and-recycling/garbage-and-provincial-recycling-program/your-garbage-and-recycling-collection-calendar). For specific collection days, you can use the search tool on the page to find your address.",
+      "error": null,
+      "elapsed_ms": 211319
+    },
+    {
+      "model": "Qwen3-1.7B-Q8_0.gguf",
+      "case": "missing_address",
+      "repetition": 1,
+      "request": "What is my garbage collection day?",
+      "prior_request": null,
+      "status": "answered",
+      "guard": null,
+      "steps": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "garbage collection day [city] [street address]"
+          },
+          "status": "success",
+          "result_characters": 1989,
+          "result_sha256": "8185bd5e6b7809b662b93a1b9268a79c25c4a1de5596a2c9b9c842056d598531",
+          "elapsed_ms": 2083
+        },
+        {
+          "name": "web_read",
+          "arguments": {
+            "url": "https://www.toronto.ca/services-payments/recycling-organics-garbage/houses/collection-schedule/2026-curbside-collection-map-schedules/"
+          },
+          "status": "success",
+          "result_characters": 4458,
+          "result_sha256": "9b7a27dbc8561fbaeded334534151b6e8a293f365462fc7c44d46b2687f7c70e",
+          "elapsed_ms": 1161
+        }
+      ],
+      "answer": "Your garbage collection day depends on your specific location within the City of Toronto. The schedules vary by district, and the provided information indicates that:\n\n- **Daytime collections** occur on specific days (e.g., Tuesday, Wednesday, Thursday, Friday) for apartments above businesses.\n- **Nighttime collections** occur on different days (e.g., Monday, Tuesday, Wednesday, Thursday) for the same area.\n\nFor an exact schedule, you should refer to the **2026 Curbside Collection Maps & Schedules** provided by the City of Toronto. If you can provide your specific address or district, I can help you find the exact day for your collection.",
+      "error": null,
+      "elapsed_ms": 158069
+    }
+  ]
+}

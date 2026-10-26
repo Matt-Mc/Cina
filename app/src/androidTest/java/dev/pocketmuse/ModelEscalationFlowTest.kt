@@ -156,7 +156,7 @@ class ModelEscalationFlowTest {
         var searches = 0
         fixture(webSearch = { searches++; "City collection lookup - https://example.com/collection - Tuesday collection" }) {
             replies(small, """[tool]{"name":"web_search","arguments":{"query":"Ottawa collection dates"}}[/tool]""", java.io.IOException("Fixture generation failed"))
-            replies(medium, "The city result lists Tuesday collection: https://example.com/collection")
+            replies(medium, TurnDecision.REPLY_CALL, "The city result lists Tuesday collection: https://example.com/collection")
             send("Search the web for Ottawa collection dates")
             assertEquals("completed", turn().status)
             assertEquals(medium.path, turn().modelPath)

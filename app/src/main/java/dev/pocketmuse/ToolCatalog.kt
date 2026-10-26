@@ -64,6 +64,7 @@ internal object ToolCatalog {
         ToolDefinition("set_alarm", "Open alarm", "alarm", ToolKind.WRITE, "Open an alarm for requested hour 0–23 and minute 0–59; user may need to save there.", listOf(id("hour"), id("minute"), s("message", false, 200))),
         ToolDefinition("share_text", "Open share sheet", "share", ToolKind.WRITE, "Open Android sharing only when requested; user chooses recipient.", listOf(s("text", max = 12000))),
         ToolDefinition("web_search", "Search the web", "web", ToolKind.READ, "Search when requested or current external facts are needed.", listOf(s("query", max = 400))),
+        ToolDefinition("web_read", "Read web page", "web", ToolKind.READ, "Read a public source URL from the user or search results when snippets lack the answer. Returns text and links, without JavaScript, login or form submission.", listOf(s("url", max = 2000))),
         ToolDefinition("mcp_find", "Find connected actions", "connections", ToolKind.DISCOVERY, "Find exact connected tool names and complete schemas before calling mcp_call.", listOf(s("query", max = 200))),
         ToolDefinition("mcp_call", "Run connected action", "connections", ToolKind.WRITE, "Use an exact discovered server, tool and input schema. Do not guess fields.", listOf(s("server", max = 200), s("tool", max = 200), ToolField("arguments", "object")))
     )
