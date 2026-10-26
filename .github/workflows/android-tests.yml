@@ -17,6 +17,9 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,14 +29,21 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Cache native compilation
+        uses: hendrikmuhs/ccache-action@e42e6681d2906409c5dde4a315af6214eaa890ee # v1.2
+        with:
+          key: android-tests-x86_64
+          max-size: 1G
       - name: Install Android build tools
         run: |
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
           test -n "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platforms;android-36" "ndk;29.0.13113456" "cmake;3.31.6"
-      - name: Test protocol and policies, build Android tests, and lint
-        run: bash ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug -Pemulator --no-daemon
+      - name: Check policies and lint before native compilation
+        run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug -PskipNative --no-daemon
+      - name: Build emulator app and test APKs
+        run: bash ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest -Pemulator --no-daemon
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
