@@ -124,24 +124,20 @@ class UsabilityRefreshTest {
         capture("note-draft")
         base.getSharedPreferences("note_draft",Context.MODE_PRIVATE).edit().clear().commit()
     }
-    @Test fun modelConnectionBackReturnsToHomeChoiceAndChatDraftStays() {
+    @Test fun modelBackReturnsToChatAndPreservesDraft() {
         compose.onNodeWithContentDescription("Message Cina").performTextInput("$marker draft")
         closeSoftKeyboard()
-        compose.onNodeWithText("Auto ⌄").performClick()
-        compose.onNodeWithText("Manage models").performClick()
+        compose.onNodeWithContentDescription("Choose chat model").performClick()
+        compose.onNodeWithText("Phone model settings").performClick()
         // The guided first-run choice retains an explicit route to optional model management.
         if(compose.onAllNodesWithText("Browse other models").fetchSemanticsNodes().isNotEmpty()) {
             compose.onNodeWithText("Browse other models").performScrollTo().performClick()
             compose.onNodeWithContentDescription("Go back").performClick()
         }
-        compose.onNodeWithContentDescription("Choose Home model").performScrollTo().performClick()
-        compose.onNodeWithText("Connect Home").performClick()
-        compose.onNodeWithContentDescription("Go back").performClick()
-        compose.onNodeWithText("Connect Home").assertExists()
-        compose.onNodeWithContentDescription("Go back").performClick()
+        compose.onNodeWithContentDescription("Choose Home model").assertDoesNotExist()
         compose.onNodeWithContentDescription("Go back").performClick()
         compose.onNodeWithText("$marker draft").assertExists()
-        compose.onNodeWithText("Get a recommended model").assertIsDisplayed()
+        compose.onNodeWithText("Set up phone model").assertIsDisplayed()
         capture("chat")
     }
     @Test fun guidedSetupReturnsToDraftWhenPhoneModelBecomesReady() {
@@ -151,10 +147,9 @@ class UsabilityRefreshTest {
         try {
             compose.onNodeWithContentDescription("Message Cina").performTextInput("$marker setup draft")
             closeSoftKeyboard()
-            compose.onNodeWithText("Get a recommended model").performClick()
-            compose.onNodeWithText("Get Cina ready").assertExists()
+            compose.onNodeWithText("Set up phone model").performClick()
+            compose.onNodeWithText("Phone model").assertExists()
             capture("setup")
-            compose.onNodeWithText("Browse other models").performScrollTo().performClick()
             file.writeText("Navigation fixture only; no inference is requested")
             LocalStore(base).use { it.addModel(marker,file.path,"fixture",1_000_000_000) }
             compose.runOnIdle { vm.refresh();vm.setModel(file.path) }

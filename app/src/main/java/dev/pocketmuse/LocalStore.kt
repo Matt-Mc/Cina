@@ -318,7 +318,8 @@ class LocalStore(context: Context) : SQLiteOpenHelper(context, "pocket_muse.db",
             while(c.moveToNext()) add(AgentTask(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getString(4), c.getLong(5)))
         }
     }
-    @Synchronized fun activeAgentTask(chatId: Long): AgentTask? = agentTasks().firstOrNull { it.chatId == chatId && it.status in setOf("active", "waiting") }
+    // Retired goals remain stored for export/history, but no longer drive inference.
+    @Synchronized fun activeAgentTask(chatId: Long): AgentTask? = null
     @Synchronized fun updateAgentTask(id: Long, status: String, result: String) {
         writableDatabase.update("agent_tasks", ContentValues().apply { put("status", status); put("last_result", result.take(4000)); put("updated_at", System.currentTimeMillis()) }, "id=?", arrayOf(id.toString()))
     }

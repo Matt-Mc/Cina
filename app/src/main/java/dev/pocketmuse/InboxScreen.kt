@@ -133,7 +133,7 @@ internal fun InboxScreen(vm: InboxViewModel = viewModel(), sourceId: String? = n
                 modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 6, enabled = !busy) }
             item { Button(onClick = { vm.captureText(draft) { draft = "" } }, enabled = !busy && draft.isNotBlank()) { Text(if (busy) "Saving…" else "Save to Inbox") } }
             if (message.isNotBlank()) item { Text(message, color = Muted) }
-            if (entries.isEmpty()) item { EmptyState("Start with anything worth keeping", "Write above, or use Share → Cina Inbox from another app. Supports text and PDFs up to 8 MB.") }
+            if (entries.isEmpty()) item { EmptyState("No captured items", "Write above, or use Share → Cina Inbox from another app. Supports text and PDFs up to 8 MB.") }
             items(entries, key = { it.id }) { entry ->
                 val state = when(entry.state) { "needs_review" -> "Needs review"; "reviewed" -> "Reviewed"; else -> "Captured" }
                 PaperRow(entry.title, "${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(entry.capturedAt))} · $state${if (entry.category.isNotBlank()) " · ${entry.category}" else ""}${if (entry.duplicate) " · Duplicate content" else ""}", "Open") { vm.open(entry) }

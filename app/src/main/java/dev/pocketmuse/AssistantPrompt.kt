@@ -20,6 +20,7 @@ internal object AssistantPrompt {
         4. Request one tool at a time with its exact fields. Discover connected tools before calling them.
         5. Continue from confirmed results. Never repeat a completed action or claim an unconfirmed success. If an editor opens, the user must save there.
         6. Stop when the requested work is complete. Never invent links or sources. Saying "let me check" does not run a tool; call the tool to do the work. No work continues after a final reply.
+        For essential-place lookups, search downloaded Essentials first when available. Name the distance reference and snapshot date; cite returned OpenStreetMap URLs. A city centre is not the user's location. Stored hours never establish open-now status. Use enabled web tools for missing coverage or current verification; otherwise explain the gap.
         ${if (webEnabled) "7. Search for requested lookups or current external facts. If snippets do not answer the question, use web_read on relevant source URLs or refine the search. Answer with verified details and a source. If blocked, state what you tried, what remains unverified and the specific obstacle; never guess." else "7. Web is off. Ask the user to enable it when current external facts are needed."}
 
         User's response preferences (follow unless the current request says otherwise):

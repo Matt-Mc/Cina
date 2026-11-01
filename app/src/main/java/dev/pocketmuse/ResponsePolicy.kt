@@ -5,7 +5,7 @@ internal enum class ResponseMode { AUTO, QUICK, DEEP }
 internal object ResponsePolicy {
     fun workFocused(request: String): Boolean = Regex("\\b(local (action )?plan|action plan|plan for (my )?approval|read_work|work_id)\\b",RegexOption.IGNORE_CASE).containsMatchIn(request)
     fun workTools(request: String): Set<String> = buildSet {
-        addAll(listOf("list_work","read_work","local_find","find_skill"))
+        addAll(listOf("list_work","read_work","local_find"))
         fun mentions(pattern: String)=Regex(pattern,RegexOption.IGNORE_CASE).containsMatchIn(request.substringBefore("Current read_work result:"))
         if(mentions("\\b(draft|create|new|build)\\b")) addAll(listOf("draft_work_step","append_work_step"))
         if(mentions("\\b(append|add)\\b")) add("append_work_step")
@@ -22,19 +22,10 @@ internal object ResponsePolicy {
         return if (goal || request.length > 600 || contextChars > 6000 || complex.containsMatchIn(request) || substantial.containsMatchIn(request.trim()) || multipleSteps) ResponseMode.DEEP else ResponseMode.QUICK
     }
 
-    fun skills(skills: List<AssistantSkill>, request: String): String {
-        val terms = request.lowercase().split(Regex("\\W+")).filter { it.length > 3 }.toSet()
-        val enabled = skills.filter { it.enabled }
-        val relevant = enabled.map { skill -> skill to terms.sumOf { word ->
-            (if (skill.title.contains(word, true)) 3 else 0) + (if (skill.description.contains(word, true)) 1 else 0)
-        } }.filter { it.second > 0 }.sortedByDescending { it.second }.take(1).map { it.first }
-        return "Available procedures (use find_skill to load instructions if needed): " +
-            enabled.joinToString("; ") { "${it.id}: ${it.title}" } + "\n" + AssistantSkills.prompt(relevant)
-    }
-
     fun toolGroups(request: String): Set<String> {
         val terms = request.lowercase()
         return mapOf(
+            "places" to listOf("pharmac", "hospital", "clinic", "atm", "toilet", "restroom", "bathroom", "drinking water", "water fountain", "station", "ferry", "police", "embass", "currency exchange", "supermarket", "grocery store", "hostel", "essentials"),
             "work" to listOf("work", "task", "plan", "step", "approval", "pause", "cancel", "schedule"),
             "notes" to listOf("note", "grocer", "packing list"), "reminders" to listOf("remind", "nudge"),
             "schedules" to listOf("schedule", "automatic", "every day", "weekly prompt"), "calendar" to listOf("calendar", "event"),

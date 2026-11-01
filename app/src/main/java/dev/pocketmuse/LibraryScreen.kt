@@ -32,9 +32,10 @@ internal fun LibraryScreen(vm: AssistantViewModel, onOpen: (String,String) -> Un
     Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
     LazyColumn(Modifier.widthIn(max=840.dp).fillMaxSize().padding(horizontal=22.dp).semantics { contentDescription="Saved library items" }, verticalArrangement=Arrangement.spacedBy(12.dp), contentPadding=PaddingValues(vertical=20.dp)) {
         item { Text("Library",fontFamily=FontFamily.Serif,fontSize=31.sp,color=Ink) }
+        item { NavigationRow("Collections", "Download Essentials areas for offline place searches") { onNavigate("Collections") } }
         item { OutlinedTextField(query,{ query=it },label={ Text("Search your library") },modifier=Modifier.fillMaxWidth(),singleLine=true) }
         item { Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            if(BuildConfig.INBOX_ENABLED) Button(onClick={ onNavigate("Inbox") }) { Text("Save something") }
+            if(BuildConfig.INBOX_ENABLED) Button(onClick={ onNavigate("Inbox") }) { Text("Add to library") }
             OutlinedButton(onClick={ onOpen("note","new") }) { Text("New note") }
         } }
         if(suggestions.isNotEmpty()) item { NavigationRow("${suggestions.size} personal details to review","Choose what helps future conversations") { onNavigate("Memory") } }
@@ -45,7 +46,7 @@ internal fun LibraryScreen(vm: AssistantViewModel, onOpen: (String,String) -> Un
         } }
         if(loading) item { LinearProgressIndicator(Modifier.fillMaxWidth(),color=Accent) }
         if(error.isNotBlank()) item { Text(error,color=MaterialTheme.colorScheme.error); TextButton(onClick={ library.load(query) }) { Text("Try again") } }
-        if(!loading && error.isBlank() && shown.isEmpty()) item { EmptyState(if(query.isBlank()) "Keep something useful" else "No matches",if(query.isBlank()) "Save a thought, write a note, or share a document with Cina." else "Try fewer words or choose another filter.") }
+        if(!loading && error.isBlank() && shown.isEmpty()) item { EmptyState(if(query.isBlank()) "Your library is empty" else "No matches",if(query.isBlank()) "Save a thought, write a note, or share a document with Cina." else "Try fewer words or choose another filter.") }
         items(shown,key={ "${it.kind}:${it.id}" }) { item ->
             NavigationRow(item.title,item.label + if(query.isNotBlank() && item.body.isNotBlank()) "\n${item.body.take(180)}" else "") { onOpen(item.kind,if(item.kind=="source") item.sourceId ?: item.id else item.id) }
         }

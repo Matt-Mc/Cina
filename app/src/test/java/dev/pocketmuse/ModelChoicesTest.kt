@@ -9,8 +9,8 @@ class ModelChoicesTest {
         assertFalse(ModelChoices.fits(ModelSlot.PHONE, 0, 3_600_000_000))
         assertFalse(ModelChoices.fits(ModelSlot.PHONE, -1, 3_600_000_000))
     }
-    @Test fun heavyPhoneGetsALargerBudgetAndStillAllowsTheSameSmallModel() {
-        assertFalse(ModelChoices.fits(ModelSlot.PHONE, 3_000_000_000, 3_600_000_000))
+    @Test fun phoneModelUsesTheDeviceMemoryBudget() {
+        assertTrue(ModelChoices.fits(ModelSlot.PHONE, 3_000_000_000, 3_600_000_000))
         assertTrue(ModelChoices.fits(ModelSlot.HEAVY_PHONE, 3_000_000_000, 3_600_000_000))
         assertTrue(ModelChoices.fits(ModelSlot.HEAVY_PHONE, 350_000_000, 3_600_000_000))
         assertFalse(ModelChoices.fits(ModelSlot.HEAVY_PHONE, 4_000_000_000, 3_600_000_000))

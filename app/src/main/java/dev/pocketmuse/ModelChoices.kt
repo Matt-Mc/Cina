@@ -19,7 +19,7 @@ internal object ModelChoices {
     fun homeName(file: RemoteModel): String? = "hf.co/${file.repo}:${file.file}".takeIf { validHomeName(it) }
     fun homeLabel(name: String): String = if(name.startsWith("hf.co/")) name.substringAfterLast(':').replace(Regex("(?i)\\.gguf$"), "") else name
     fun limit(slot: ModelSlot, phoneLimit: Long): Long = when (slot) {
-        ModelSlot.PHONE -> minOf(2_500_000_000L, phoneLimit * 3 / 4)
+        ModelSlot.PHONE -> phoneLimit
         ModelSlot.HEAVY_PHONE -> phoneLimit
         ModelSlot.HOME -> Long.MAX_VALUE
     }

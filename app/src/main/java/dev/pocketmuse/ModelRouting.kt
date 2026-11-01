@@ -6,7 +6,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CancellationException
 
-/** Model size is a routing hint, not a guarantee of answer quality. Explicit slot choices take precedence. */
+/** Local chat always uses the explicitly selected phone model, regardless of response effort. */
 internal object ModelRouting {
     const val MAX_ATTEMPTS = 3
     private val parameters = Regex("""(?:^|[^a-z0-9])(\d+(?:\.\d+)?)\s*([bm])(?=$|[^a-z])""", RegexOption.IGNORE_CASE)
@@ -20,17 +20,8 @@ internal object ModelRouting {
     fun plan(models: List<LocalModel>, requested: ResponseMode, resolved: ResponseMode,
         selected: String?, quick: String?, heavy: String?, retryFrom: String? = null,
         suitable: (LocalModel) -> Boolean = { true }): List<LocalModel> {
-        val available = models.distinctBy { it.path }
-        val ranked = available.filter(suitable).sortedWith(compareBy<LocalModel>(::size).thenBy { it.bytes }.thenBy { it.path })
-        fun find(path: String?) = available.firstOrNull { it.path == path }
-        val initial = find(retryFrom) ?: find(if (resolved == ResponseMode.DEEP) heavy else quick)
-            ?: (if (requested == ResponseMode.AUTO) {
-                if (resolved == ResponseMode.DEEP) ranked.lastOrNull() else ranked.firstOrNull()
-            } else find(selected))
-            ?: find(selected) ?: ranked.firstOrNull() ?: return emptyList()
-        // Equal parameter counts are quantization variants, not the next larger model.
-        val larger = ranked.filter { size(it) > size(initial) }.distinctBy(::size)
-        return (listOf(initial) + larger).take(MAX_ATTEMPTS)
+        // Response effort never changes the user's phone-model selection.
+        return models.firstOrNull { it.path == selected }?.let(::listOf).orEmpty()
     }
 }
 
