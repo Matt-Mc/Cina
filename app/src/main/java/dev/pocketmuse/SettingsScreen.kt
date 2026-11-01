@@ -19,42 +19,40 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 internal fun SettingsScreen(vm: AssistantViewModel, onNavigate: (String) -> Unit) {
-    val skills by vm.skills.collectAsState()
     val models by vm.models.collectAsState()
+    val selected by vm.selectedModel.collectAsState()
     val connections by vm.connections.collectAsState()
     val profile by vm.youProfile.collectAsState()
-    val home by vm.homeState.collectAsState()
-    Page("Settings", "A few choices to make Cina yours.") {
+    Page("Settings", "Models, connections and preferences.") {
         NavigationRow("About you", "Profile and response preferences") { onNavigate("You") }
-        NavigationRow("Responses", "Speed, model choices & response timings") { onNavigate("Response settings") }
-        NavigationRow("Models", "${models.size} installed · downloads & access", { onNavigate("Models") })
-        NavigationRow("Skills", "${skills.count { it.enabled }} enabled · familiar tasks & instructions", { onNavigate("Skills") })
-        NavigationRow("Connections", "${connections.count { it.connected } + if(home.paired) 1 else 0} connected · services & tools", { onNavigate("Connections") })
+        NavigationRow("Responses", "Response effort and timing history") { onNavigate("Response settings") }
+        NavigationRow("Phone model", models.firstOrNull { it.path==selected }?.name ?: "Choose or download a model", { onNavigate("Models") })
+        NavigationRow("Model server", "Optional Ollama or llama.cpp server") { onNavigate("Model endpoint") }
+        NavigationRow("Connections", "${connections.count { it.connected }} connected · services & tools", { onNavigate("Connections") })
         NavigationRow("Appearance", "${profile.petName.ifBlank { "Cina" }} · appearance & name", { onNavigate("Companion") })
         NavigationRow("Chat & permissions", "New chat defaults & action approvals", { onNavigate("Chat preferences") })
         if(BuildConfig.INBOX_ENABLED) NavigationRow("Captured library backup", "Storage, cleanup & encrypted source backups") { onNavigate("Library storage") }
         NavigationRow("About & updates", "Version ${BuildConfig.VERSION_NAME}", { onNavigate("About") })
-        Text("Conversations and personal details are stored on this phone. Home receives chat excerpts and attached passages when you choose a Home model. Connected services receive data when you use them.",
+        Text("Conversations and personal details are stored on this phone. Your model server receives chat excerpts and attached passages when selected. Connected services receive data when you use them.",
             color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
     }
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun ResponseSettings(vm: AssistantViewModel, onModels: () -> Unit) {
     val mode by vm.responseMode.collectAsState()
-    val home by vm.homeState.collectAsState()
     val samples by vm.performanceSamples.collectAsState()
     var showTimings by remember { mutableStateOf(false) }
     SectionTitle("Response mode")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ResponseMode.entries.forEach { choice ->
             FilterChip(selected = mode == choice, onClick = { vm.setResponseMode(choice) }, label = { Text(choice.name.lowercase().replaceFirstChar { it.uppercase() }) })
         }
     }
-    Text("Auto uses Quick for ordinary requests and Deep for complex work. Quick disables thinking when the model supports it. Both modes can use the same model.", color = Muted, fontSize = 12.sp)
-    TextButton(onClick = onModels) { Text("Choose Phone, Heavy phone and Home models") }
+    Text("All response modes use your selected phone model. Quick uses less thinking; Deep allows more time. Auto chooses the effort for each request.", color = Muted, fontSize = 12.sp)
+    TextButton(onClick = onModels) { Text("Change phone model") }
     TextButton(onClick = { showTimings = true }) { Text("Response timings · ${samples.size} recent runs") }
-    if(home.deepModel != null) Text("Larger analysis can use Home when connected. Your heavy phone model remains available offline.", color = Muted, fontSize = 12.sp)
     if (showTimings) AlertDialog(onDismissRequest = { showTimings = false }, title = { Text("Local response timings") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Milestones are measured from Send. Prompt processing is a duration. No message content is recorded.")
@@ -90,7 +88,7 @@ internal fun ChatPreferencesScreen(vm: AssistantViewModel) {
 
 @Composable
 internal fun AboutScreen(updateStatus: String, onCheckUpdates: () -> Unit) {
-    Page("About Cina", "A little space to think, right on your phone.") {
+    Page("About Cina", "Version, updates and app information.") {
         SectionTitle("App updates")
         Text("Version ${BuildConfig.VERSION_NAME}", color = Muted)
         Button(onClick = onCheckUpdates) { Text("Check for updates") }
@@ -104,7 +102,6 @@ internal fun AboutScreen(updateStatus: String, onCheckUpdates: () -> Unit) {
 internal fun ConnectionsScreen(vm: AssistantViewModel) {
     val activity = checkNotNull(LocalActivity.current) as ComponentActivity
     val connections by vm.connections.collectAsState()
-    val home by vm.homeState.collectAsState()
     var expandedConnection by rememberSaveable { mutableStateOf<String?>(null) }
     var mcpToken by remember { mutableStateOf("") }
     var customName by rememberSaveable { mutableStateOf("") }
@@ -118,7 +115,7 @@ internal fun ConnectionsScreen(vm: AssistantViewModel) {
         if(expandedConnection != null && states[expandedConnection]?.startsWith("Connected ·") == true) { expandedConnection = null; mcpToken = "" }
         if(showCustom && states["custom"]?.startsWith("Connected ·") == true) { showCustom = false; customName = ""; customUrl = ""; customToken = "" }
     }
-    Page("Connections", "Bring your services into a conversation when you need them.") {
+    Page("Connections", "Manage services and tool access.") {
         Text("Connect a service to let Cina use its available tools. Actions ask before they run unless you always allow that tool or enable YOLO mode.", color = Muted, fontSize = 13.sp)
         Text("Connect Google or Linear with your account. Google asks for access only to the service you choose.", color = Muted, fontSize = 12.sp)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -126,8 +123,7 @@ internal fun ConnectionsScreen(vm: AssistantViewModel) {
             Spacer(Modifier.weight(1f))
             TextButton(onClick = { showAvailable = !showAvailable }) { Text(if (showAvailable) "Hide available" else "+ Add") }
         }
-        HomeConnectionRow(vm, showAvailable)
-        if (!home.paired && connections.none { it.connected || it.preset.id.startsWith("custom_") }) Text("No services connected. Add one when you need it.", color = Muted)
+        if (connections.none { it.connected || it.preset.id.startsWith("custom_") }) Text("No services connected. Add one when you need it.", color = Muted)
         if (showAvailable) {
             SectionTitle("Sign in ready")
             Text("Choose a service, select your account, and approve access.", color = Muted, fontSize = 12.sp)

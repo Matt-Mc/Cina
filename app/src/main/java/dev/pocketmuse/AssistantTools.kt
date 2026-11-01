@@ -129,15 +129,6 @@ class AssistantTools(private val context: Context, private val store: LocalStore
                 val query = a.getString("query").take(200)
                 specification((store.chat(chat.id) ?: chat).web, query, all = query.isBlank())
             }
-            "find_skill" -> {
-                val query = a.getString("query").take(200)
-                val skills = SkillStore(context).read().filter { it.enabled && (it.id.contains(query, true) || it.title.contains(query, true) || it.description.contains(query, true)) }.take(1)
-                AssistantSkills.prompt(skills).ifBlank { "No matching enabled procedure." }
-            }
-            "create_skill" -> {
-                val skill = SkillStore(context).create(required("title"), required("description"), required("instructions"))
-                "Skill saved: ${skill.title}. Review, edit, enable or remove it in Settings > Skills."
-            }
             "search_memories" -> {
                 require(context.getSharedPreferences("settings", 0).getBoolean("memory", true)) { "Memory is off. Enable it in Library > Memory." }
                 val query = a.getString("query").trim()
@@ -207,6 +198,7 @@ class AssistantTools(private val context: Context, private val store: LocalStore
                 ReminderReceiver.cancel(context, id); store.updateReminder(id, title, time); ReminderReceiver.schedule(context, id, time)
                 "$title rescheduled to ${ReminderTime.label(Instant.ofEpochMilli(time).toString())}."
             }
+            "search_essential_places" -> CollectionRepository(context).use { it.answer(a.getString("query"),a.optString("area")) }
             "search_attachments" -> {
                 val q = a.optString("query").trim()
                 (if(q.isBlank()) store.attachmentPreview(chat.id) else store.searchAttachments(chat.id, q)).joinToString("\n\n") { "${it.name}, passage ${it.chunk + 1}: ${it.body.take(1200)}" }.ifBlank { "No relevant passages in this chat's attached files." }

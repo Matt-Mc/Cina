@@ -33,7 +33,7 @@ internal fun DurableWorkContent(onOpenResult: (String,Long)->Unit,vm: DurableWor
     Text("Build up to eight ordered local steps. Review every remaining step and its start time for one approved run. Completed steps never run again.",color=Muted)
     Button(enabled=!busy,onClick={ editing=null;editor=true }) { Text("New local task") }
     if(message.isNotBlank()) Text(message,color=Ink)
-    if(tasks.isEmpty()) EmptyState("Ready when you are","Create a local task here, or turn a kept Inbox action into a task.")
+    if(tasks.isEmpty()) EmptyState("No saved actions","Create a local task here, or turn a kept Inbox action into a task.")
     tasks.filter { if(focusId!=null) it.id==focusId else showFinished || it.state !in setOf("completed","cancelled") }.forEach { task ->
         Surface(color=Soft,shape=MaterialTheme.shapes.medium) { Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             SectionTitle(task.action.title)

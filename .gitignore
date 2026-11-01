@@ -19,3 +19,9 @@ companion/.mode.install.*
 companion/.cina-bootstrap.lock/
 companion/.cina-download.*
 companion/.cina-source
+archive/**/.env
+archive/**/compose.override.yaml
+archive/**/__pycache__/
+archive/**/.cina-*
+archive/**/.env.install.*
+archive/**/.mode.install.*

@@ -100,115 +100,25 @@ class ModelEscalationFlowTest {
         }
     }
 
-    @Test fun simpleQaStartsSmallAndComplexWorkStartsLarge() = fixture {
+    @Test fun simpleAndComplexRequestsKeepTheSelectedModel() = fixture {
         replies(small, TurnDecision.REPLY_CALL, "Hello!")
         send("How are you?")
-        assertEquals(small.path, turn().modelPath)
-        main { vm.newChat(); store.renameChat(vm.active.value, "Escalation test") }
-        replies(large, TurnDecision.REPLY_CALL, "Here is a detailed comparison.")
+        assertEquals(small.path,turn().modelPath)
+        main { vm.newChat();store.renameChat(vm.active.value,"Single model test") }
+        replies(small,TurnDecision.REPLY_CALL,"Here is a detailed comparison.")
         send("Compare the tradeoffs of these two plans in detail")
-        assertEquals(large.path, turn().modelPath)
-        assertEquals(listOf(small.path, large.path), engine.loads)
+        assertEquals(small.path,turn().modelPath)
+        assertTrue(engine.loads.all { it==small.path })
     }
-
-    @Test fun invalidActionEscalatesWithoutAddingAnotherUserMessage() = fixture {
-        replies(small, "[tool]{\"name\":\"unknown_tool\",\"arguments\":{}}[/tool]")
-        replies(medium, TurnDecision.REPLY_CALL, "The answer is four.")
+    @Test fun modelFailureRequiresAnExplicitNewSelection() = fixture {
+        replies(small,java.io.IOException("Fixture model failure"))
         send("What is two plus two?")
-        assertEquals(listOf(small.path, medium.path), engine.loads)
-        assertEquals("completed", turn().status)
-        assertEquals(2, turn().attempts)
-        assertEquals(medium.path, turn().modelPath)
-        assertEquals(1, store.messages(vm.active.value).count { it.role == "user" })
-        assertTrue(store.actionLog(vm.active.value).any { it.contains("Trying larger model") })
-    }
-
-    @Test fun approvedWriteIsNotRepeatedWhenItsModelFailsAfterExecution() = fixture {
-        val call = """[tool]{"name":"create_note","arguments":{"title":"Packing","body":"Jacket"}}[/tool]"""
-        replies(small, call, java.io.IOException("Fixture model generation failed"))
-        replies(medium, "Saved the packing note with Jacket.")
-        send("Can you save a note titled Packing with body Jacket and explain what you saved?")
-        assertEquals("approval", turn().status)
-        assertTrue(store.notes().isEmpty())
-        assertEquals(listOf(small.path), engine.loads)
-        main { vm.approve() }; waitForIdle()
-        assertEquals("completed", turn().status)
-        assertEquals(2, turn().attempts)
-        assertEquals(1, store.notes().size)
-        assertEquals("Jacket", store.notes().single().body)
-        assertTrue(engine.prompts.first { it.first == medium.path }.second.contains("Tool result for create_note"))
-        assertTrue(engine.prompts.first { it.first == medium.path }.second.contains("Saved note"))
-        assertEquals(1, store.messages(vm.active.value).count { it.role == "user" })
-    }
-
-    @Test fun failedSearchConnectionDoesNotEscalate() {
-        var searches = 0
-        fixture(webSearch = { searches++; throw java.io.IOException("Fixture connection failed") }) {
-            replies(small, """[tool]{"name":"web_search","arguments":{"query":"Ottawa collection dates"}}[/tool]""")
-            send("Search the web for Ottawa collection dates")
-            assertEquals("failed", turn().status)
-            assertEquals(1, searches)
-            assertEquals(listOf(small.path), engine.loads)
-        }
-    }
-
-    @Test fun successfulSearchIsNotRepeatedWhenTheReplyNeedsALargerModel() {
-        var searches = 0
-        fixture(webSearch = { searches++; "City collection lookup - https://example.com/collection - Tuesday collection" }) {
-            replies(small, """[tool]{"name":"web_search","arguments":{"query":"Ottawa collection dates"}}[/tool]""", java.io.IOException("Fixture generation failed"))
-            replies(medium, TurnDecision.REPLY_CALL, "The city result lists Tuesday collection: https://example.com/collection")
-            send("Search the web for Ottawa collection dates")
-            assertEquals("completed", turn().status)
-            assertEquals(medium.path, turn().modelPath)
-            assertEquals(1, searches)
-            assertTrue(engine.prompts.first { it.first == medium.path }.second.contains("Tuesday collection"))
-            assertTrue(store.messages(vm.active.value).last().body.contains("Tuesday"))
-        }
-    }
-
-    @Test fun largerModelCannotRepeatAnAlreadyApprovedWriteOrAskForItsApprovalAgain() = fixture {
-        val call = """[tool]{"name":"create_note","arguments":{"title":"Packing","body":"Jacket"}}[/tool]"""
-        replies(small, call, java.io.IOException("Fixture generation failed"))
-        replies(medium, call, "The packing note was saved with Jacket.")
-        send("Can you save a note titled Packing with body Jacket and explain what you saved?")
-        main { vm.approve() }; waitForIdle()
-        assertEquals("completed", turn().status)
-        assertNull(turn().pending)
-        assertEquals(1, store.notes().size)
-        assertEquals(listOf(small.path, medium.path), engine.loads)
-    }
-
-    @Test fun missingDetailsAndRejectedApprovalDoNotEscalate() = fixture {
-        replies(small, """[tool]{"name":"create_reminder","arguments":{"title":"Jacket","when_text":"tomorrow at 9 AM"}}[/tool]""")
-        send("Remind me to bring a jacket")
-        assertEquals("completed", turn().status)
-        assertEquals(1, turn().attempts)
-        assertTrue(store.reminders().isEmpty())
-        assertTrue(store.messages(vm.active.value).last().body.contains("date and time"))
-        main { vm.newChat(); store.renameChat(vm.active.value, "Escalation test") }
-        replies(small, """[tool]{"name":"create_note","arguments":{"title":"Packing","body":"Jacket"}}[/tool]""")
-        send("Save a note titled Packing with body Jacket")
-        assertEquals("approval", turn().status)
-        main { vm.reject() }
-        assertEquals("cancelled", turn().status)
-        assertTrue(store.notes().isEmpty())
-        assertFalse(engine.loads.contains(medium.path))
-    }
-
-    @Test fun exhaustionIsBoundedAndStopDoesNotStartTheNextModel() = fixture {
-        listOf(small, medium, large).forEach { replies(it, "invalid decision") }
-        send("What is two plus two?")
-        assertEquals("failed", turn().status)
-        assertEquals(3, turn().attempts)
-        assertEquals(listOf(small.path, medium.path, large.path), engine.loads)
-        main { vm.newChat(); store.renameChat(vm.active.value, "Escalation test") }
-        replies(small, "WAIT")
-        main { assertTrue(vm.send("Hello")) }
-        withTimeout(5000) { while (engine.prompts.lastOrNull()?.first != small.path) delay(10) }
-        val loadsBeforeStop = engine.loads.toList()
-        main { vm.stop() }
-        delay(100)
-        assertEquals(loadsBeforeStop, engine.loads)
-        assertEquals("interrupted", turn().status)
+        assertEquals("failed",turn().status)
+        assertEquals(listOf(small.path),engine.loads)
+        replies(medium,TurnDecision.REPLY_CALL,"Four.")
+        main { vm.setModel(medium.path);vm.retryTurn(turn().id) };waitForIdle()
+        assertEquals("completed",turn().status)
+        assertEquals(medium.path,turn().modelPath)
+        assertEquals(1,store.messages(vm.active.value).count { it.role=="user" })
     }
 }

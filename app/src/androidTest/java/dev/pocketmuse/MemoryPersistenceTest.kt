@@ -26,7 +26,7 @@ class MemoryPersistenceTest {
             assertEquals("durable", store.memories().single().kind)
             assertNull(store.memories().single().expiresMillis)
             assertEquals(12, store.readableDatabase.version)
-            assertTrue(HomeRepository.jobs(store).isEmpty())
+            store.readableDatabase.rawQuery("SELECT COUNT(*) FROM home_jobs", null).use { assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0)) }
             assertEquals("Preserve all of this", store.notes().single().body)
             assertEquals(1L, store.notes().single().version)
         }

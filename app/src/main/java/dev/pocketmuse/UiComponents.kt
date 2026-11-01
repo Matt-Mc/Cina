@@ -28,8 +28,8 @@ internal val Ink = Color(0xFF26312C)
 internal val Muted = Color(0xFF58665E)
 internal val Line = Color(0xFFE7E9E2)
 internal val Soft = Color(0xFFF0F2EC)
-internal val Accent = Color(0xFF4F7562)
-internal val Warm = Color(0xFFF4F0E9)
+internal val Accent = Color(0xFFAA4928)
+internal val Warm = Color(0xFFF6E9DF)
 
 @Composable
 internal fun Page(title: String, subtitle: String? = null, content: @Composable ColumnScope.() -> Unit) {
@@ -83,7 +83,7 @@ internal fun SettingToggle(title: String, detail: String, checked: Boolean, onCh
 internal fun ScreenTabs(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     Row(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(16.dp)).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         labels.forEachIndexed { index, label ->
-            Surface(color = if (index == selected) Ink else Color.Transparent, shape = RoundedCornerShape(12.dp),
+            Surface(color = if (index == selected) Accent else Color.Transparent, shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f).selectable(selected = index == selected, role = androidx.compose.ui.semantics.Role.Tab, onClick = { onSelect(index) })) {
                 Box(Modifier.heightIn(min = 48.dp).padding(horizontal = 4.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
                     Text(label, color = if (index == selected) Color.White else Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)

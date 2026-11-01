@@ -116,14 +116,14 @@ class NavigationTest {
     @Test fun openingModelManagementPreservesChatDraftAndUsesCompactActions() {
         val draft = "Help me plan a weekend walk"
         compose.onNodeWithContentDescription("Message Cina").performTextInput(draft)
-        compose.onNodeWithText("Auto ⌄").performClick()
-        compose.onNodeWithText("Manage models").performClick()
-        compose.onNodeWithText("Models").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Choose chat model").performClick()
+        compose.onNodeWithText("Phone model settings").performClick()
+        compose.onNodeWithText("Phone model").assertIsDisplayed()
         compose.onNodeWithContentDescription("Go back").performClick()
         compose.onNodeWithText(draft).assertIsDisplayed()
         compose.onAllNodesWithText("Start as goal").assertCountEquals(0)
         compose.onNodeWithContentDescription("Message actions").performClick()
-        compose.onNodeWithText("Track as goal").assertIsDisplayed()
+        compose.onNodeWithText("Track as goal").assertDoesNotExist()
         compose.onNodeWithText("Attach a file").assertIsDisplayed()
     }
 

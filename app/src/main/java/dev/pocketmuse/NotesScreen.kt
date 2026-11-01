@@ -51,7 +51,7 @@ internal fun NotesScreen(vm: AssistantViewModel,openId: Long? = null,startNew: B
         if(startNew) { if(hasDraft) { resumeDraft() } else newNote();onOpened() }
         else if(openId!=null) notes.firstOrNull { it.id==openId }?.let { openNote(it);onOpened() }
     }
-    Page("Notes", "Small things worth keeping close.") {
+    Page("Notes", "Create, search and edit saved notes.") {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("${notes.size} saved on this phone", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
             TextButton(onClick = { if(hasDraft) { resumeDraft() } else newNote() }) { Text("+ New note") }
@@ -63,7 +63,7 @@ internal fun NotesScreen(vm: AssistantViewModel,openId: Long? = null,startNew: B
         if (notes.isNotEmpty()) TextButton(onClick = { export.launch("cina-notes.md") }) { Text("Export notes") }
         if (notes.isNotEmpty()) OutlinedTextField(query, { query = it }, label = { Text("Search notes") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         val filtered = notes.filter { query.isBlank() || it.title.contains(query, true) || it.body.contains(query, true) }
-        if (notes.isEmpty()) EmptyState("Keep a thought", "Write a note here, ask Cina to save one in chat, or use the Quick Note widget.")
+        if (notes.isEmpty()) EmptyState("No notes yet", "Write a note here, ask Cina to save one in chat, or use the Quick Note widget.")
         else if (filtered.isEmpty()) Text("No notes match your search.", color = Muted)
         filtered.forEach { note ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

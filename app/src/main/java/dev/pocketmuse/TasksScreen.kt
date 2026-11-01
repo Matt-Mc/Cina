@@ -29,73 +29,22 @@ internal fun TasksScreen(vm: AssistantViewModel, tab: Int, onTab: (Int) -> Unit,
     var focusKind by rememberSaveable(entryKey) { mutableStateOf<String?>(null) }
     var focusId by rememberSaveable(entryKey) { mutableStateOf<String?>(null) }
     var filters by rememberSaveable(entryKey) { mutableStateOf(false) }
-    fun open(kind: String,id: String) { focusKind=kind;focusId=id;onTab(when(kind) { "goal"->0;"reminder"->1;"schedule"->2;"action"->3;else->4 }) }
+    fun open(kind: String,id: String) { focusKind=kind;focusId=id;onTab(when(kind) { "reminder"->1;"schedule"->2;"action"->3;else->4 }) }
     fun overview() { focusKind=null;focusId=null;filters=false;onTab(4) }
     LaunchedEffect(openKind,openId) { if(openKind!=null && openId!=null) { open(openKind,openId);onConsumed() } }
     BackHandler(focusId!=null || tab!=4) { overview() }
     LaunchedEffect(Unit) { while (true) { vm.refresh();delay(5_000) } }
-    Page("Work", "What needs you, what's next, and what's done.") {
+    Page("Work", "Reminders, scheduled prompts and approved actions.") {
         if(tab!=4 || focusId!=null) TextButton(onClick={ overview() }) { Text("Back to Work") }
         else TextButton(onClick={ filters=!filters }) { Text(if(filters) "Hide filters" else "All work & filters") }
-        if(filters || tab!=4) ScreenTabs(listOf("Goals", "Reminders", "Scheduled", "Actions"), tab) { focusId=null;focusKind=null;onTab(it) }
+        if(filters || tab!=4) ScreenTabs(listOf("Reminders", "Scheduled", "Actions"), (tab - 1).coerceIn(0, 2)) { focusId=null;focusKind=null;onTab(it + 1) }
         when {
-            focusKind=="home" && focusId!=null -> HomeWorkRows(vm,focusId=focusId)
-            tab==0 -> GoalsContent(vm,onOpenChat,focusId)
             tab==1 -> RemindersContent(vm,focusId)
             tab==2 -> ScheduledContent(vm,focusId)
             tab==3 -> DurableWorkContent(onOpenResult,focusId=focusId)
             else -> WorkOverview(vm,::open)
         }
     }
-}
-
-@Composable
-private fun GoalsContent(vm: AssistantViewModel, onOpenChat: () -> Unit, focusId: String? = null) {
-    val tasks by vm.agentTasks.collectAsState()
-    var viewed by remember { mutableStateOf<AgentTask?>(null) }
-    var showCompleted by rememberSaveable { mutableStateOf(false) }
-    var creating by rememberSaveable { mutableStateOf(false) }
-    var goal by rememberSaveable { mutableStateOf("") }
-    val models by vm.models.collectAsState()
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("Continue a plan in chat", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        TextButton(onClick = { creating = true }) { Text("+ New goal") }
-    }
-    Text("Goals run while chat is open. Progress is saved when you leave.", color = Muted, fontSize = 12.sp)
-    val active = tasks.filter { it.status != "done" }
-    if (active.isEmpty()) EmptyState("Make a little progress", "Choose New goal to describe what you want to achieve. Cina keeps the plan and actions together.")
-    (if (focusId!=null) tasks.filter { it.id.toString()==focusId } else if (showCompleted) tasks else active).forEach { task ->
-        Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(task.goal, color = Ink, fontWeight = FontWeight.Medium, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            Text(if (task.status == "waiting") { if (task.lastResult.startsWith("Waiting for approval:")) "Needs approval" else "Waiting for you" } else task.status.replaceFirstChar { it.uppercase() }, color = Accent, fontSize = 12.sp)
-            if (task.lastResult.isNotBlank()) Text(task.lastResult, color = Muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { vm.resumeGoal(task.id); onOpenChat() }) { Text(if (task.status == "done") "Follow up" else "Continue in chat") }
-                Spacer(Modifier.weight(1f))
-                var menu by remember { mutableStateOf(false) }
-                Box {
-                    TextButton(onClick = { menu = true }) { Text("Options") }
-                    DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("History") }, onClick = { viewed = task; menu = false })
-                        if (task.status == "active") DropdownMenuItem(text = { Text("Pause") }, onClick = { vm.pauseGoal(task.id); menu = false })
-                        if (task.status != "done") DropdownMenuItem(text = { Text("Mark complete") }, onClick = { vm.completeGoal(task.id); menu = false })
-                    }
-                }
-            }
-        }
-    }
-    if (tasks.any { it.status == "done" }) TextButton(onClick = { showCompleted = !showCompleted }) { Text(if (showCompleted) "Hide completed" else "Show completed (${tasks.count { it.status == "done" }})") }
-    if (creating) AlertDialog(onDismissRequest = { creating = false }, title = { Text("New goal") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Describe the outcome. Cina will start a new chat and save progress as you work.", color = Muted)
-            OutlinedTextField(goal, { goal = it }, label = { Text("What do you want to achieve?") }, minLines = 3)
-            if(models.isEmpty()) Text("Install a model in Settings → Models first.", color = Muted)
-        } }, confirmButton = { TextButton(onClick = { vm.newChat(); if(vm.startGoal(goal)) { creating = false; goal = ""; onOpenChat() } }, enabled = goal.isNotBlank() && models.isNotEmpty()) { Text("Start goal") } },
-        dismissButton = { TextButton(onClick = { creating = false }) { Text("Cancel") } })
-    viewed?.let { task -> AlertDialog(onDismissRequest = { viewed = null }, title = { Text("Goal history") },
-        text = { Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
-            vm.taskEvents(task.id).forEach { Text(it, Modifier.padding(vertical = 6.dp), color = Ink) }
-        } }, confirmButton = { TextButton(onClick = { viewed = null }) { Text("Done") } }) }
 }
 
 @Composable
@@ -109,13 +58,13 @@ private fun RemindersContent(vm: AssistantViewModel, focusId: String? = null) {
     var showCompleted by rememberSaveable { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<Reminder?>(null) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("A nudge at the right time", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Text("Upcoming reminders", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
         TextButton(onClick = { editingId = null; title = ""; whenMillis = null; editorOpen = true }) { Text("+ New reminder") }
     }
     NotificationPermissionNotice()
     Text("Android battery settings can affect delivery.", color = Muted, fontSize = 12.sp)
     val open = reminders.filter { !it.done }
-    if (open.isEmpty()) EmptyState("Nothing to remember yet", "Add a reminder here or ask Cina to set one in chat.")
+    if (open.isEmpty()) EmptyState("No reminders", "Add a reminder here or ask Cina to set one in chat.")
     (if (focusId!=null) reminders.filter { it.id.toString()==focusId } else if (showCompleted) reminders else open).forEach { reminder ->
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(reminder.done, onCheckedChange = { if (it) vm.completeReminder(reminder.id) else vm.undoReminder(reminder.id) }, modifier = Modifier.semantics { contentDescription = "Complete ${reminder.title}" })
@@ -183,7 +132,7 @@ private fun ScheduledContent(vm: AssistantViewModel, focusId: String? = null) {
     }
     NotificationPermissionNotice()
     Text("Runs on this phone in the background. Proposed notes and reminders wait for review in Actions. Android may start prompts late. Connected services are unavailable.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-    if (tasks.isEmpty()) EmptyState("Something for later", "Schedule a one-time, daily, or weekly prompt. Cina saves the result and notifies you when it is ready.")
+    if (tasks.isEmpty()) EmptyState("No scheduled prompts", "Schedule a one-time, daily, or weekly prompt. Cina saves the result and notifies you when it is ready.")
     tasks.filter { focusId==null || it.id.toString()==focusId }.forEach { task ->
         Column(Modifier.fillMaxWidth().background(Soft, RoundedCornerShape(18.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

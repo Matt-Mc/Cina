@@ -44,7 +44,7 @@ internal fun ColumnScope.MemoryContent(vm: AssistantViewModel, onOpenChat: () ->
                 Row { TextButton(onClick = { vm.approveMemory(suggestion.id, replacement) }) { Text("Remember") }; TextButton(onClick = { vm.dismissMemory(suggestion.id) }) { Text("Dismiss") } }
             }
         }
-        if(memories.isEmpty()) EmptyState("Keep useful details", "Review suggested details here, or explicitly ask Cina to remember something in chat.")
+        if(memories.isEmpty()) EmptyState("No saved memories", "Review suggested details here, or explicitly ask Cina to remember something in chat.")
         memories.filter { focusId==null || it.id==focusId }.forEach { memory ->
             Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(memory.fact, color = Ink, fontSize = 15.sp, lineHeight = 22.sp)

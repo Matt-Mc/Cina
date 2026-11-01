@@ -28,13 +28,6 @@ class ResponsePolicyTest {
         assertEquals(ResponseMode.QUICK, ResponsePolicy.resolve(ResponseMode.AUTO, "What is photosynthesis?"))
         assertEquals(ResponseMode.QUICK, ResponsePolicy.resolve(ResponseMode.QUICK, "Summarize this file", contextChars = 20_000))
     }
-    @Test fun simpleChatDoesNotLoadEveryProcedureButKeepsDiscovery() {
-        val prompt = ResponsePolicy.skills(AssistantSkills.builtIns, "Hello")
-        assertTrue(prompt.contains("find_skill"))
-        assertFalse(prompt.contains("Call create_skill once"))
-        assertFalse(prompt.contains("Draft a day-by-day plan"))
-        assertTrue(ResponsePolicy.skills(AssistantSkills.builtIns, "weekly planning").contains("Draft a day-by-day plan"))
-    }
     @Test fun toolSelectionHasAnEscapeRoute() {
         val simple = ToolCatalog.select("Hello")
         assertFalse(simple.any { it.name == "create_note" })
