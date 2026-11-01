@@ -68,7 +68,9 @@ internal object Essentials {
     }
     fun parse(raw: String, centre: GeoPoint, radiusKm: Int): EssentialsSnapshot {
         val root = JSONObject(raw)
-        require(root.optString("remark").isBlank()) { "The map service returned an incomplete area. Try a smaller radius or retry later." }
+        if (root.optString("remark").isNotBlank()) {
+            throw IncompleteMapException()
+        }
         val timestamp = root.getJSONObject("osm3s").getString("timestamp_osm_base")
         java.time.Instant.parse(timestamp)
         val elements = root.getJSONArray("elements")

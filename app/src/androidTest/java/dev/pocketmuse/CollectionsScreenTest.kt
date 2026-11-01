@@ -13,6 +13,28 @@ import java.io.File
 class CollectionsScreenTest {
     @get:Rule(order=0) val permissions=NotificationPermissionRule()
     @get:Rule val compose=createAndroidComposeRule<MainActivity>()
+    @Test fun liveCityLookupSelectsAnAreaAndEditingClearsIt() {
+        org.junit.Assume.assumeTrue(androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("liveCity")=="true")
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Library").performClick()
+        compose.onNodeWithText("Collections").performClick()
+        val vm=ViewModelProvider(compose.activity)[CollectionsViewModel::class.java]
+        compose.waitForIdle()
+        if(compose.onAllNodesWithText("Download another area").fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithText("Download another area").performClick()
+        }
+        compose.onNodeWithText("City and country").performScrollTo().performTextReplacement("Ottawa, Canada")
+        compose.onNodeWithText("Find city").performClick()
+        compose.waitUntil(45_000) { vm.state.value.choices.isNotEmpty() || vm.state.value.error.isNotBlank() }
+        org.junit.Assert.assertTrue(vm.state.value.error, vm.state.value.choices.isNotEmpty())
+        val choice=vm.state.value.choices.first()
+        compose.onNodeWithText(choice.title).performScrollTo().performClick()
+        compose.onNodeWithText("Download Essentials area").performScrollTo().assertIsEnabled()
+        compose.onNodeWithText("Latitude").assertDoesNotExist()
+        compose.onNodeWithText("City and country").performScrollTo().performTextReplacement("Toronto, Canada")
+        compose.onNodeWithText("Download Essentials area").performScrollTo().assertIsNotEnabled()
+        org.junit.Assert.assertTrue(vm.state.value.choices.isEmpty())
+    }
     @Test fun libraryCanSearchDownloadedPlacesWithoutAModel() {
         val context=ApplicationProvider.getApplicationContext<Context>()
         val id="essentials-ui-test"
@@ -28,6 +50,11 @@ class CollectionsScreenTest {
             val vm=ViewModelProvider(compose.activity)[CollectionsViewModel::class.java]
             compose.waitUntil(10_000) { vm.state.value.saved.any { it.id==id } }
             compose.onNodeWithText("Download another area").performClick()
+            compose.onNodeWithText("City and country").assertIsDisplayed().performTextInput("Ottawa, Canada")
+            compose.onNodeWithText("Find city").assertIsEnabled()
+            compose.onNodeWithText("Latitude").assertDoesNotExist()
+            compose.onNodeWithText("Longitude").assertDoesNotExist()
+            compose.onNodeWithText("Enter coordinates instead").assertDoesNotExist()
             compose.onNodeWithText("Download Essentials area").performScrollTo().assertIsNotEnabled()
             File(context.getExternalFilesDir(null),"essentials-collections.png").outputStream().use {
                 compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)

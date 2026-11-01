@@ -28,7 +28,8 @@ class EssentialsTest {
         assertThrows(IllegalArgumentException::class.java) { Essentials.query(centre,21) }
     }
     @Test fun partialServiceResponsesNeverBecomeInstalledSnapshots() {
-        assertThrows(IllegalArgumentException::class.java) { Essentials.parse(response("",",\"remark\":\"runtime error: timed out\""),centre,5) }
+        val error = assertThrows(IncompleteMapException::class.java) { Essentials.parse(response("",",\"remark\":\"runtime error: timed out\""),centre,5) }
+        assertTrue(EssentialsDownload.retryable(error))
     }
     @Test fun parsingKeepsSourcesDeduplicatesAndDoesNotInventDetails() {
         val node="""{"type":"node","id":1,"lat":45.001,"lon":-75,"tags":{"amenity":"pharmacy","name":"Local pharmacy"}}"""
