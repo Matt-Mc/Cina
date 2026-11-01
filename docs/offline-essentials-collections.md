@@ -7,7 +7,7 @@ embassies/consulates, currency exchange, supermarkets and hostels from OpenStree
 ## User flow
 
 Open Library → Collections. Find a city through Android's geocoding service, select
-a result, or enter an area name and coordinates. Download a 2, 5, 10 or 20 km circle.
+a result, then download a 2, 5, 10 or 20 km circle. Coordinate entry is no longer needed or shown.
 This is a radius around a point, not an administrative boundary. The screen explains
 that city lookup uses the device's geocoding service and area download sends the
 chosen coordinates to Overpass. No location permission is needed for either.
@@ -45,8 +45,11 @@ The app rejects partial responses containing an Overpass `remark`, validates
 timestamps/coordinates and retains the old installed area until a transaction commits.
 The HTTP client has a 20-second connection limit, 80-second read limit and 100-second
 whole-call deadline. Cancellation closes the request. Transient network failures and
-HTTP 408/429/500/502/503/504 get one WorkManager retry after at least 30 seconds;
-other failures do not retry. There is no provider switching or endless retry loop.
+HTTP 408/429/500/502/503/504 and incomplete Overpass responses get one WorkManager
+retry after at least 30 seconds, using overpass-api.de as the backup provider.
+Other validation failures do not retry. There are at most two transfer attempts.
+Status follows the persisted request ID, with active work taking precedence, rather
+than relying on the unspecified ordering of WorkManager history.
 Cancelled or failed imports roll back. Valid empty snapshots are allowed and clearly
 reported as zero records. Workers can survive navigation/process recreation;
 interrupted HTTP requests restart rather than resume byte ranges. Retry is manual
@@ -72,7 +75,7 @@ Future additions can include curated regional bundles, whole-pack integrity hash
 resumable static artifacts, and document collections with passage search. Offline
 maps/navigation, parsed opening-hours evaluation, full-world search, file-pack import,
 are not implemented. Android city search may be absent
-on some devices, so coordinate entry remains available. Public Overpass availability
+on some devices; the screen explains this without offering coordinate entry. Public Overpass availability
 is not guaranteed; a distributable regional-pack service would remove that setup dependency.
 
 FieldAtlas's catalog offers useful candidates for later adapters: Vegan places can
@@ -131,3 +134,26 @@ download worker against a 1 km Ottawa area. It is excluded from normal offline c
   `liveEssentials=true, keepEssentials=true`, then enable airplane mode and run with
   `verifyOfflineEssentials=true`. Do not count skipped opt-in methods as passing live
   verification. No release was published.
+
+### City input and download reliability verification — 2026-11-01
+
+- Removed coordinate entry. Search by city and country, choose a result, then
+  download the selected radius. Editing the city clears the previous selection.
+- Track the active WorkManager request and persist its ID for finished status;
+  never choose an arbitrary entry from work history. Duplicate active downloads
+  report an actionable error instead of silently appearing to start.
+- The single delayed retry now uses overpass-api.de. Partial Overpass responses
+  also qualify for that retry and never replace installed data.
+- Debug app/test APKs build; all 107 JVM tests pass; Android lint passes.
+- Six emulator UI, transfer, and repository checks pass. The city form was
+  visually inspected. Two additional checks pass for real Ottawa city lookup,
+  invalidating a selection when its text changes, and persisted work status.
+- The live Ottawa worker download passed in 149 seconds: the first attempt
+  requested a retry and the backup attempt succeeded. A fresh app process then
+  passed the saved-area search check with airplane mode enabled and Wi-Fi off.
+  This closes the earlier live-download verification gap for the tested area;
+  public server availability and performance can still vary.
+- Evidence is in `.tools/city-download-build-authorized.log`,
+  `.tools/city-download-device-tests.log`, `.tools/city-live-download.log`,
+  `.tools/city-live-offline.log`, `.tools/city-lookup-status-tests.log`, and
+  `.tools/city-download-final-check.log`. No release was published.

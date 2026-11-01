@@ -35,11 +35,11 @@ internal class CollectionsViewModel(application: Application) : AndroidViewModel
             try {
                 val (saved,download)=withContext(Dispatchers.IO) {
                     val saved=CollectionRepository(getApplication()).use { it.list() }
-                    saved to work.getWorkInfosForUniqueWork(CollectionDownloadWorker.TAG).get().lastOrNull()
+                    saved to CollectionDownloadWorker.currentWork(getApplication())
                 }
                 val active=download?.state?.isFinished==false
                 val message=when {
-                    active && download?.state==WorkInfo.State.ENQUEUED && download.runAttemptCount>0 -> "Map service was unavailable. Waiting to retry once; your saved area is unchanged."
+                    active && download?.state==WorkInfo.State.ENQUEUED && download.runAttemptCount>0 -> "Map service was unavailable. Waiting to try a backup server; your saved area is unchanged."
                     active -> download?.progress?.getString("message") ?: "Waiting for a network connection…"
                     download?.state==WorkInfo.State.FAILED -> download.outputData.getString("message").orEmpty()
                     download?.state==WorkInfo.State.SUCCEEDED -> download.outputData.getString("message").orEmpty()
@@ -64,15 +64,16 @@ internal class CollectionsViewModel(application: Application) : AndroidViewModel
     } }
     @Suppress("DEPRECATION")
     fun findCity(query: String) = action {
+        mutable.update { it.copy(choices=emptyList()) }
         require(query.isNotBlank()) { "Enter a city or area name." }
-        require(Geocoder.isPresent()) { "City search is unavailable on this device. Enter coordinates instead." }
+        require(Geocoder.isPresent()) { "City search is unavailable on this device. Existing downloaded areas still work offline." }
         val matches=Geocoder(getApplication()).getFromLocationName(query.take(200),5).orEmpty().filter { it.hasLatitude() && it.hasLongitude() }
-        require(matches.isNotEmpty()) { "No matching city found. Try a city and country, or enter coordinates." }
+        require(matches.isNotEmpty()) { "No matching city found. Check the spelling and include the country, then try again online." }
         val choices=matches.map { AreaChoice((it.getAddressLine(0) ?: query).take(160),GeoPoint(it.latitude,it.longitude)) }.distinctBy { it.point }
         mutable.update { it.copy(choices=choices) }
     }
-    fun download(title: String,lat: String,lon: String,radius: Int,id: String = UUID.randomUUID().toString()) = action {
-        val point=GeoPoint(lat.toDoubleOrNull() ?: error("Enter a valid latitude."),lon.toDoubleOrNull() ?: error("Enter a valid longitude."))
+    fun clearCity() { mutable.update { it.copy(choices=emptyList(),error="") } }
+    fun download(title: String,point: GeoPoint,radius: Int,id: String = UUID.randomUUID().toString()) = action {
         CollectionDownloadWorker.enqueue(getApplication(),id,title.trim(),point,radius)
         mutable.update { it.copy(downloadActive=true) }
     }

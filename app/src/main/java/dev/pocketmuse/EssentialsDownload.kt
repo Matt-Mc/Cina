@@ -8,10 +8,11 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 internal class MapServiceException(val code: Int) : IOException("Map service returned HTTP $code.")
+internal class IncompleteMapException : IOException("The map service returned an incomplete area. Try a smaller radius or retry later.")
 
 /** One bounded transfer; cancellation closes the request even while waiting for headers. */
 internal class EssentialsDownload(
-    private val endpoint: String = "https://overpass.private.coffee/api/interpreter",
+    private val endpoint: String = PRIMARY_ENDPOINT,
     private val readTimeoutMs: Int = 80_000,
     private val deadlineMs: Long = 100_000
 ) {
@@ -50,6 +51,8 @@ internal class EssentialsDownload(
     }
 
     companion object {
+        const val PRIMARY_ENDPOINT = "https://overpass.private.coffee/api/interpreter"
+        const val RETRY_ENDPOINT = "https://overpass-api.de/api/interpreter"
         fun retryable(error: Exception) = when (error) {
             is MapServiceException -> error.code in setOf(408, 429, 500, 502, 503, 504)
             is IOException -> true

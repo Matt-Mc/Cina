@@ -32,7 +32,6 @@ internal fun CollectionsScreen(vm: CollectionsViewModel = viewModel()) {
     var radius by rememberSaveable { mutableIntStateOf(5) }
     var category by rememberSaveable { mutableStateOf("pharmacy") }
     var remove by remember { mutableStateOf<SavedCollection?>(null) }
-    var coordinates by rememberSaveable { mutableStateOf(false) }
     var addingArea by rememberSaveable { mutableStateOf(false) }
     val permission=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if(result[Manifest.permission.ACCESS_FINE_LOCATION]==true || result[Manifest.permission.ACCESS_COARSE_LOCATION]==true) vm.useLocation() else vm.locationDenied()
@@ -45,33 +44,26 @@ internal fun CollectionsScreen(vm: CollectionsViewModel = viewModel()) {
         item {
             Text(CollectionCatalog.essentials.title,style=MaterialTheme.typography.titleLarge)
             Text(CollectionCatalog.essentials.description)
-            Text("Download a circle around a city or chosen point. Search and place details then work offline, without a model.",color=Muted)
+            Text("Download places around a city. Search and place details then work offline, without a model.",color=Muted)
         }
         if(state.saved.isNotEmpty()) item { OutlinedButton(onClick={ addingArea=!addingArea }) { Text(if(addingArea) "Close area download" else "Download another area") } }
         if(state.saved.isEmpty() || addingArea) {
         item {
-            OutlinedTextField(city,{ city=it },label={ Text("City and country") },singleLine=true,modifier=Modifier.fillMaxWidth())
-            TextButton(onClick={ vm.findCity(city) },enabled=!state.busy && city.isNotBlank()) { Text("Find area online") }
-            Text("City search uses your device's geocoding service. Downloads send the chosen coordinates to Private.coffee's Overpass service for OpenStreetMap data.",style=MaterialTheme.typography.bodySmall,color=Muted)
+            OutlinedTextField(city,{ city=it;title="";lat="";lon="";vm.clearCity() },label={ Text("City and country") },placeholder={ Text("e.g. Ottawa, Canada") },enabled=!state.busy,singleLine=true,modifier=Modifier.fillMaxWidth())
+            TextButton(onClick={ title="";lat="";lon="";vm.findCity(city) },enabled=!state.busy && city.isNotBlank()) { Text(if(state.busy) "Finding city…" else "Find city") }
+            Text("Find your city online, then choose how far around it to download.",style=MaterialTheme.typography.bodySmall,color=Muted)
         }
         items(state.choices,key={ "${it.point.lat},${it.point.lon}" }) { choice ->
-            OutlinedButton(onClick={ title=choice.title;lat=choice.point.lat.toString();lon=choice.point.lon.toString();coordinates=true },modifier=Modifier.fillMaxWidth()) { Text(choice.title) }
+            OutlinedButton(onClick={ title=choice.title;lat=choice.point.lat.toString();lon=choice.point.lon.toString() },modifier=Modifier.fillMaxWidth()) { Text(choice.title) }
         }
         item {
-            TextButton(onClick={ coordinates=!coordinates }) { Text(if(coordinates) "Hide area coordinates" else "Enter coordinates instead") }
-            if(coordinates) {
-                OutlinedTextField(title,{ title=it.take(160) },label={ Text("Area name") },modifier=Modifier.fillMaxWidth())
-                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(lat,{ lat=it },label={ Text("Latitude") },singleLine=true,modifier=Modifier.weight(1f))
-                    OutlinedTextField(lon,{ lon=it },label={ Text("Longitude") },singleLine=true,modifier=Modifier.weight(1f))
-                }
-            }
-            if(title.isNotBlank()) Text("Selected: $title\n$lat, $lon")
+            if(title.isNotBlank()) Text("Selected: $title")
             Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 listOf(2,5,10,20).forEach { km -> FilterChip(selected=radius==km,onClick={ radius=km },label={ Text("$km km radius") }) }
             }
             Text("Size depends on the area; downloads are capped at 12 MB. Larger or busy areas may need a smaller radius.",style=MaterialTheme.typography.bodySmall,color=Muted)
-            Button(onClick={ vm.download(title,lat,lon,radius) },enabled=!state.busy && !state.downloadActive && title.isNotBlank() && lat.isNotBlank() && lon.isNotBlank()) { Text("Download Essentials area") }
+            Button(onClick={ vm.download(title,GeoPoint(lat.toDouble(),lon.toDouble()),radius) },enabled=!state.busy && !state.downloadActive && title.isNotBlank() && lat.isNotBlank() && lon.isNotBlank()) { Text("Download Essentials area") }
+            Text("City search uses your device’s geocoding service. Downloads share the selected city’s centre with Private.coffee, or overpass-api.de if a retry is needed.",style=MaterialTheme.typography.bodySmall,color=Muted)
         }
         }
         if(state.busy || state.downloadActive) item {
@@ -93,7 +85,7 @@ internal fun CollectionsScreen(vm: CollectionsViewModel = viewModel()) {
                 }
                 TextButton(onClick={ vm.choose(saved.id) },enabled=saved.enabled && !state.busy) { Text("Search from this area's centre") }
                 Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                    TextButton(onClick={ vm.download(saved.title,saved.centre.lat.toString(),saved.centre.lon.toString(),saved.radiusKm,saved.id) },enabled=!state.downloadActive && !state.busy) { Text("Refresh online") }
+                    TextButton(onClick={ vm.download(saved.title,saved.centre,saved.radiusKm,saved.id) },enabled=!state.downloadActive && !state.busy) { Text("Refresh online") }
                     TextButton(onClick={ remove=saved },enabled=!state.downloadActive && !state.busy) { Text("Remove") }
                 }
             } }

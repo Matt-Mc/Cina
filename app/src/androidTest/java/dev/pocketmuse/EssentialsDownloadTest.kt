@@ -19,7 +19,7 @@ class EssentialsDownloadTest {
             val deadline=System.currentTimeMillis()+260_000
             var done: WorkInfo?=null
             while(System.currentTimeMillis()<deadline) {
-                val info=work.getWorkInfosForUniqueWork(CollectionDownloadWorker.TAG).get().lastOrNull()
+                val info=CollectionDownloadWorker.currentWork(context)
                 if(info?.state?.isFinished==true) { done=info;break }
                 Thread.sleep(250)
             }
